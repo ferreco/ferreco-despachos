@@ -283,6 +283,25 @@
   .cot-rate-item.recomendado .cot-rate-carrier { color: var(--green-dark); }
   .cot-badge { font-size: 8px; font-weight: 800; background: var(--green); color: white; padding: 2px 6px; border-radius: 3px; letter-spacing: 0.5px; }
 
+  /* Cotización en vivo (antes de generar la guía) */
+  .cotiz-live { margin: 14px 0 4px; }
+  .cotiz-titulo { font-size: 11px; font-weight: 800; color: var(--navy); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px; }
+  .cotiz-hint { font-weight: 600; color: var(--muted); text-transform: none; letter-spacing: 0; }
+  .cotiz-opciones { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cotiz-card { position: relative; text-align: left; padding: 12px 14px; border: 2px solid var(--border); border-radius: 10px; background: white; cursor: pointer; transition: all 0.15s; font-family: 'Montserrat', sans-serif; }
+  .cotiz-card:hover { border-color: var(--green); }
+  .cotiz-card.sel { border-color: var(--green); background: var(--green-light); box-shadow: 0 0 0 1px var(--green); }
+  .cotiz-badge { position: absolute; top: -8px; right: 10px; font-size: 8px; font-weight: 800; background: var(--green); color: white; padding: 2px 7px; border-radius: 3px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .cotiz-carrier { font-size: 13px; font-weight: 800; color: var(--navy); text-transform: uppercase; letter-spacing: 0.3px; }
+  .cotiz-precio { font-size: 20px; font-weight: 900; color: var(--green-dark); margin-top: 2px; }
+  .cotiz-sub { font-size: 10px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+  .cotiz-card.sel .cotiz-precio { color: var(--green-dark); }
+  .cotiz-recotizar { margin-top: 10px; padding: 6px 12px; border: 1.5px solid var(--border); border-radius: 7px; background: white; color: var(--muted); font-family: 'Montserrat', sans-serif; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .cotiz-recotizar:hover { border-color: var(--navy); color: var(--navy); }
+  .cotiz-loading, .cotiz-error { font-size: 12px; font-weight: 600; padding: 12px 14px; border-radius: 10px; }
+  .cotiz-loading { background: var(--mid); color: var(--muted); }
+  .cotiz-error { background: var(--cobro-light); color: var(--cobro); border: 1.5px solid var(--cobro); }
+
   /* Módulo masivo */
   .masivo-textarea { width: 100%; min-height: 180px; background: var(--mid); border: 1.5px solid var(--border); border-radius: 8px; padding: 14px; color: var(--black); font-family: 'Montserrat', sans-serif; font-size: 12px; font-weight: 500; resize: vertical; line-height: 1.6; outline: none; }
   .masivo-textarea:focus { border-color: var(--navy); background: white; }
@@ -539,6 +558,7 @@ function checkPwd() {
         <div id="r_productos_list"></div>
       </div>
       <div class="warning-box" id="warningBox"></div>
+      <div class="cotiz-live" id="cotizacionLive"></div>
       <div class="actions-row">
         <button class="btn-main" style="margin-top:0" onclick="confirmarYGenerar()">Confirmar y generar</button>
         <button class="btn-secondary" onclick="resetForm()">Cancelar</button>
@@ -761,6 +781,8 @@ let tamanoSeleccionado = 'S';
 let canalSeleccionado = 'TIKTOK';
 let envioPagador = 'FERRECO';
 let transportadoraSeleccionada = 'AUTO';
+let cotizacionLive = null;   // { rates, topDos, seleccion, esCOD, fingerprint } — cotización real mostrada antes de generar
+let _cotizDebounce = null;
 let datosExtraidos = null;
 let imagenesBase64 = [];
 const MAX_IMAGENES = 5;
@@ -1368,6 +1390,7 @@ function mostrarResultado(d) {
 
   actualizarEtiqueta(d);
   document.getElementById('resultCard').classList.remove('hidden');
+  cotizarLive();   // cotización real automática: muestra las 2 transportadoras más baratas
 }
 
 function _actualizarEtiquetaBase(d) {
@@ -1435,8 +1458,9 @@ function copiarMensaje() {
   });
 }
 
-async function confirmarYGenerar() {
-  const datos = {
+// Construye el objeto `datos` con los valores actuales del formulario de resultado
+function construirDatosActuales() {
+  return {
     ...datosExtraidos,
     cliente: {
       nombre: document.getElementById('r_nombre').value.trim(),
@@ -1450,6 +1474,110 @@ async function confirmarYGenerar() {
       reference: document.getElementById('r_reference').value.trim(),
     }
   };
+}
+
+// Huella para saber si una cotización mostrada sigue vigente al confirmar
+function fpCotiz(daneDestino, pkg, esCOD, codValue) {
+  return JSON.stringify([daneDestino, pkg, !!esCOD, Number(codValue) || 0]);
+}
+
+// Cotización REAL (mismo endpoint y cuerpo que la generación de guía) → tarifas exactas
+async function obtenerCotizacion(datos) {
+  const envioKey = getEnvioKey();
+  if (!envioKey) throw new Error('Configura la API Key de EnvioClick en ⚙️ Admin');
+  const daneDestino = buscarDaneCode(datos.cliente.ciudad_nombre);
+  if (!daneDestino) throw new Error('No se encontró código DANE para "' + (datos.cliente.ciudad_nombre || '?') + '". Verifica la ciudad.');
+  const daneOrigen = getCfg('dane') || '11001000';
+  const pkg = getPaquete();
+  const valorDeclarado = Number(datos.valorProductos) || Number(datos.codValue) || 0;
+  const cotBody = {
+    packages: [pkg],
+    description: 'Productos',
+    contentValue: valorDeclarado,
+    origin: { daneCode: daneOrigen, address: truncar(getCfg('direccion'), 50) },
+    destination: { daneCode: daneDestino, address: truncar(datos.cliente.direccion, 50) }
+  };
+  if (datos.esCOD) { cotBody.codValue = datos.codValue; cotBody.codPaymentMethod = 'cash'; }
+  const cotRes = await fetch('https://api.envioclickpro.com.co/api/v2/quotation', {
+    method: 'POST',
+    headers: { 'Authorization': envioKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cotBody)
+  });
+  const cotData = await cotRes.json();
+  if (cotData.status !== 'OK') throw new Error('Cotización rechazada por EnvioClick: ' + JSON.stringify(cotData.status_messages || cotData));
+  const rates = cotData.data?.rates || [];
+  return { rates, daneDestino, daneOrigen, pkg, valorDeclarado };
+}
+
+// Cotiza y muestra las 2 transportadoras más baratas en la tarjeta de resultado
+async function cotizarLive() {
+  const cont = document.getElementById('cotizacionLive');
+  if (!cont) return;
+  if (tipoSeleccionado === 'SOLO_ETIQUETA') { cont.innerHTML = ''; cotizacionLive = null; return; }
+  cont.innerHTML = '<div class="cotiz-loading">Cotizando envío con EnvioClick…</div>';
+  const datos = construirDatosActuales();
+  try {
+    const { rates, daneDestino, pkg } = await obtenerCotizacion(datos);
+    const validas = (datos.esCOD ? rates.filter(r => r.cod) : rates)
+      .slice().sort((a, b) => Number(a.flete) - Number(b.flete));
+    if (validas.length === 0) {
+      cont.innerHTML = '<div class="cotiz-error">⚠️ Sin tarifas disponibles para esta ciudad' + (datos.esCOD ? ' con contraentrega.' : '.') + '</div>';
+      cotizacionLive = null;
+      return;
+    }
+    cotizacionLive = {
+      rates: validas,
+      topDos: validas.slice(0, 2),
+      seleccion: validas[0],              // predeterminada: la más barata
+      esCOD: datos.esCOD,
+      fingerprint: fpCotiz(daneDestino, pkg, datos.esCOD, datos.codValue)
+    };
+    renderCotizacionLive();
+  } catch (err) {
+    cont.innerHTML = '<div class="cotiz-error">⚠️ ' + err.message + '</div>';
+    cotizacionLive = null;
+  }
+}
+
+function renderCotizacionLive() {
+  const cont = document.getElementById('cotizacionLive');
+  if (!cont || !cotizacionLive) return;
+  const { topDos, seleccion, esCOD } = cotizacionLive;
+  let html = '<div class="cotiz-titulo">Transportadora y costo del envío <span class="cotiz-hint">· toca para elegir</span></div><div class="cotiz-opciones">';
+  topDos.forEach((r, i) => {
+    const sel = String(r.idRate) === String(seleccion.idRate);
+    const com = esCOD ? Number(r.codDetails?.codCost || 0) : 0;
+    const totalEnvio = Number(r.flete) + com;
+    html += `<button type="button" class="cotiz-card${sel ? ' sel' : ''}" onclick="seleccionarCotizLive('${r.idRate}')">
+      ${i === 0 ? '<span class="cotiz-badge">Más barata</span>' : ''}
+      <div class="cotiz-carrier">${escHtml(r.carrier)}</div>
+      <div class="cotiz-precio">$${totalEnvio.toLocaleString('es-CO')}</div>
+      <div class="cotiz-sub">Flete $${Number(r.flete).toLocaleString('es-CO')}${com ? ' + $' + com.toLocaleString('es-CO') + ' recaudo' : ''}</div>
+    </button>`;
+  });
+  html += '</div><button type="button" class="cotiz-recotizar" onclick="cotizarLive()">🔄 Recotizar</button>';
+  cont.innerHTML = html;
+}
+
+function seleccionarCotizLive(idRate) {
+  if (!cotizacionLive) return;
+  const r = cotizacionLive.topDos.find(x => String(x.idRate) === String(idRate));
+  if (r) { cotizacionLive.seleccion = r; renderCotizacionLive(); }
+}
+
+// Recotiza con retardo (al corregir la ciudad), sólo si la tarjeta de resultado está visible
+function cotizarLiveDebounced() {
+  const card = document.getElementById('resultCard');
+  if (!card || card.classList.contains('hidden') || tipoSeleccionado === 'SOLO_ETIQUETA') return;
+  cotizacionLive = null;
+  const cont = document.getElementById('cotizacionLive');
+  if (cont) cont.innerHTML = '<div class="cotiz-loading">Esperando ciudad…</div>';
+  if (_cotizDebounce) clearTimeout(_cotizDebounce);
+  _cotizDebounce = setTimeout(cotizarLive, 800);
+}
+
+async function confirmarYGenerar() {
+  const datos = construirDatosActuales();
 
   actualizarEtiqueta(datos);
   document.getElementById('finalCard').classList.remove('hidden');
@@ -1534,35 +1662,24 @@ async function confirmarYGenerar() {
     // Prioridad: valor productos > valor a cobrar > 0
     const valorDeclarado = Number(datos.valorProductos) || Number(datos.codValue) || 0;
 
-    // --- COTIZACIÓN ---
-    const cotBody = {
-      packages: [pkg],
-      description: 'Productos',
-      contentValue: valorDeclarado,
-      origin: { daneCode: daneOrigen, address: truncar(getCfg('direccion'), 50) },
-      destination: { daneCode: daneDestino, address: truncar(datos.cliente.direccion, 50) }
-    };
-    if (datos.esCOD) { cotBody.codValue = datos.codValue; cotBody.codPaymentMethod = 'cash'; }
-
-    const cotRes = await fetch('https://api.envioclickpro.com.co/api/v2/quotation', {
-      method: 'POST',
-      headers: { 'Authorization': envioKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify(cotBody)
-    });
-    const cotData = await cotRes.json();
-    if (cotData.status !== 'OK') {
-      throw new Error('Cotización rechazada por EnvioClick: ' + JSON.stringify(cotData.status_messages || cotData));
-    }
-    const rates = cotData.data?.rates || [];
-    const resultado = elegirTarifa(rates, datos.esCOD, transportadoraSeleccionada);
-    if (!resultado) {
-      if (transportadoraSeleccionada !== 'AUTO') {
-        throw new Error(transportadoraSeleccionada + ' no está disponible para esta ciudad/COD. Prueba con Automática u otra transportadora.');
+    // --- TARIFA ---
+    // Reutiliza la cotización ya mostrada (mismo idRate → precio EXACTO al mostrado).
+    // Si cambió la ciudad, el tamaño o el valor COD, recotiza al instante.
+    let rate;
+    const fpActual = fpCotiz(daneDestino, pkg, datos.esCOD, datos.codValue);
+    if (cotizacionLive && cotizacionLive.fingerprint === fpActual && cotizacionLive.seleccion) {
+      rate = cotizacionLive.seleccion;
+      console.log('Tarifa reutilizada de cotización en vivo:', rate.carrier);
+    } else {
+      const { rates } = await obtenerCotizacion(datos);
+      const pref = (cotizacionLive && cotizacionLive.seleccion) ? cotizacionLive.seleccion.carrier : transportadoraSeleccionada;
+      const resultado = elegirTarifa(rates, datos.esCOD, pref) || elegirTarifa(rates, datos.esCOD, 'AUTO');
+      if (!resultado) {
+        throw new Error('EnvioClick no devolvió ninguna tarifa para esta ciudad/COD. Revisa los datos del destino.');
       }
-      throw new Error('EnvioClick no devolvió ninguna tarifa. Revisa los datos del destino.');
+      rate = resultado.rate;
+      console.log('Tarifa recotizada:', resultado.nota);
     }
-    const { rate, nota: notaTarifa } = resultado;
-    console.log('Tarifa elegida:', notaTarifa);
     const { idRate, flete = 0, carrier: transportadora = '' } = rate;
 
     // --- GUÍA ---
@@ -1730,6 +1847,9 @@ function resetForm() {
   document.getElementById('finalCard').classList.add('hidden');
   document.getElementById('statusBar').classList.remove('show');
   const vvw = document.getElementById('valorVentaPagadoWrap'); if (vvw) vvw.style.display = 'none';
+  cotizacionLive = null;
+  if (_cotizDebounce) { clearTimeout(_cotizDebounce); _cotizDebounce = null; }
+  const cotCont = document.getElementById('cotizacionLive'); if (cotCont) cotCont.innerHTML = '';
   datosExtraidos = null;
   mensajeParaCopiar = '';
   resetProductos();
@@ -2050,6 +2170,7 @@ function verificarCiudad() {
     matchEl.style.display = 'block';
     matchEl.style.color = 'var(--error)';
   }
+  cotizarLiveDebounced();   // recotiza si cambió la ciudad y la tarjeta de resultado está visible
 }
 
 function actualizarPreviewNombre() {
