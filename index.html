@@ -939,6 +939,13 @@ function setTransportadora(t) {
     if (el) el.classList.toggle('active', k === t);
   actualizarResumen();
 });
+  // Si ya hay una cotización mostrada, re-elige las opciones según la nueva preferencia (sin recotizar)
+  if (cotizacionLive && cotizacionLive.rates && cotizacionLive.rates.length) {
+    const { topDos, seleccion } = elegirTopDos(cotizacionLive.rates, t);
+    cotizacionLive.topDos = topDos;
+    cotizacionLive.seleccion = seleccion;
+    renderCotizacionLive();
+  }
 }
 
 // Mapeo nombres transportadora EnvioClick -> clave interna
@@ -1481,6 +1488,30 @@ function fpCotiz(daneDestino, pkg, esCOD, codValue) {
   return JSON.stringify([daneDestino, pkg, !!esCOD, Number(codValue) || 0]);
 }
 
+// ¿La tarifa corresponde a la transportadora preferida (clave interna)?
+function carrierCoincide(carrier, prefKey) {
+  const n = normalizarCarrier(carrier), p = normalizarCarrier(prefKey);
+  return n === p || n.includes(p) || p.includes(n);
+}
+
+// Decide qué 2 tarifas mostrar y cuál queda preseleccionada, según la preferencia del inicio.
+// `validas` viene ordenada por flete ascendente.
+function elegirTopDos(validas, prefKey) {
+  if (validas.length === 0) return { topDos: [], seleccion: null };
+  if (prefKey && prefKey !== 'AUTO') {
+    const elegida = validas.find(r => carrierCoincide(r.carrier, prefKey));
+    if (elegida) {
+      // La elegida al inicio + la alternativa más barata distinta, ordenadas por precio
+      const otra = validas.find(r => String(r.idRate) !== String(elegida.idRate));
+      const par = otra ? [elegida, otra] : [elegida];
+      par.sort((a, b) => Number(a.flete) - Number(b.flete));
+      return { topDos: par, seleccion: elegida };   // preseleccionada: la del inicio
+    }
+    // La transportadora elegida no está disponible para esta ciudad/COD → caer a las 2 más baratas
+  }
+  return { topDos: validas.slice(0, 2), seleccion: validas[0] };  // AUTO: 2 más baratas, default la más barata
+}
+
 // Cotización REAL (mismo endpoint y cuerpo que la generación de guía) → tarifas exactas
 async function obtenerCotizacion(datos) {
   const envioKey = getEnvioKey();
@@ -1525,10 +1556,11 @@ async function cotizarLive() {
       cotizacionLive = null;
       return;
     }
+    const { topDos, seleccion } = elegirTopDos(validas, transportadoraSeleccionada);
     cotizacionLive = {
       rates: validas,
-      topDos: validas.slice(0, 2),
-      seleccion: validas[0],              // predeterminada: la más barata
+      topDos,
+      seleccion,
       esCOD: datos.esCOD,
       fingerprint: fpCotiz(daneDestino, pkg, datos.esCOD, datos.codValue)
     };
