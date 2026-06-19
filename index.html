@@ -1002,12 +1002,24 @@ function padMin(txt, min, padChar) {
   return t;
 }
 
+// Alias de ciudades: nombre común → nombre oficial en el catálogo DANE
+const CIUDAD_ALIAS = {
+  'la hormiga': 'villa del guamez',
+  'la hormiga putumayo': 'villa del guamez',
+  'villa del guamez': 'villa del guamez',
+  'villagarzon': 'villa garzon',
+  'guamez': 'villa del guamez'
+};
+
 function normCiudad(c) {
-  return String(c || '').toLowerCase()
+  let k = String(c || '').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[.,]/g, '')
     .replace(/\s+d\.?\s*c\.?$/i, '')
     .trim();
+  // Aplicar alias si existe
+  if (CIUDAD_ALIAS[k]) k = CIUDAD_ALIAS[k];
+  return k;
 }
 
 function buscarDaneCode(ciudad) {
@@ -1261,7 +1273,7 @@ async function procesar() {
 - cedula: número de cédula o documento de identidad si aparece, si no null
 - direccion: calle, carrera, número de la casa o edificio
 - barrio
-- ciudad_nombre: ciudad y departamento (ej: "Manizales, Caldas" o "Bogotá D.C."). IMPORTANTE: escribe el nombre EXACTAMENTE como aparece en Colombia (con tildes, sin abreviaturas). Si el texto dice solo "Cali" escribe "Cali, Valle del Cauca". Si dice "Medellin" escribe "Medellín, Antioquia". Nunca uses nombres parciales o abreviados.
+- ciudad_nombre: ciudad y departamento (ej: "Manizales, Caldas" o "Bogotá D.C."). IMPORTANTE: escribe el nombre EXACTAMENTE como aparece en Colombia (con tildes, sin abreviaturas). Si el texto dice solo "Cali" escribe "Cali, Valle del Cauca". Si dice "Medellin" escribe "Medellín, Antioquia". Si dice "La Hormiga" usa "Villa del Guamez, Putumayo" (La Hormiga es el nombre comercial de ese municipio). Nunca uses nombres parciales o abreviados.
 - telefono: solo 10 dígitos, sin espacios ni símbolos. Si viene +57, quítalo.
 - email: email del cliente si aparece, si no null
 - cross_street: entre calles si se menciona (ej: "entre Cll 5 y Cll 7"), si no null
@@ -1300,8 +1312,9 @@ RESPONDE ÚNICAMENTE con JSON válido sin texto adicional ni backticks:
         const m = String(p).match(/^(\d+)\s+(.+?)(?:\s+([\w\-]+))?$/);
         return m ? {cant:m[1], nombre:m[2], codigo:m[3]||''} : {cant:'1', nombre:String(p), codigo:''};
       });
+      // Guardar string legible solo para referencia (no se re-parsea)
       datosExtraidos.productos = datosExtraidos.productosObj.map(p => 
-        (p.cant && p.cant !== '1' ? p.cant + 'x ' : '') + p.nombre + (p.codigo ? ' ' + p.codigo : '')
+        (p.cant && p.cant !== '1' ? p.cant + ' x ' : '') + p.nombre + (p.codigo ? ' (' + p.codigo + ')' : '')
       );
     }
     const { pago, codValue, esCOD } = getValorCobro();
@@ -1373,21 +1386,35 @@ function _actualizarEtiquetaBase(d) {
   }
   // Build product table from extracted data if no manual rows exist
   const prodEl = document.getElementById('e_prod');
-  const prods = (d.productos || []).filter(Boolean);
-  if (prods.length > 0 && productosEtiqueta.length === 0) {
-    // Parse "2 Taladro REF-001" style strings into table
-    const rows = prods.map(p => {
-      const m = p.match(/^(\d+)\s+(.+?)(?:\s+([\w\-]+))?$/);
-      return m ? {cant:m[1], nombre:m[2], codigo:m[3]||''} : {cant:'1', nombre:p, codigo:''};
-    });
-    prodEl.innerHTML = buildProdTableHTML(rows);
-  } else if (prods.length === 0 && productosEtiqueta.length === 0) {
-    prodEl.textContent = '—';
+  if (productosEtiqueta.length === 0) {
+    const objs = d.productosObj || [];
+    if (objs.length > 0) {
+      const rows = objs.filter(p => p && p.nombre).map(p => ({ cant: p.cant || '1', nombre: p.nombre, codigo: p.codigo || '' }));
+      prodEl.innerHTML = buildProdTableHTML(rows);
+    } else {
+      const prods = (d.productos || []).filter(Boolean);
+      if (prods.length > 0) {
+        const rows = prods.map(p => {
+          const m = String(p).match(/^(\d+)\s*x?\s+(.+?)(?:\s*\(([\w\-]+)\))?$/);
+          return m ? {cant:m[1], nombre:m[2].trim(), codigo:m[3]||''} : {cant:'1', nombre:String(p), codigo:''};
+        });
+        prodEl.innerHTML = buildProdTableHTML(rows);
+      } else {
+        prodEl.textContent = '—';
+      }
+    }
   }
   const cobroEl = document.getElementById('e_cobro');
-  if (d.pago === 'PAGADO') cobroEl.textContent = 'PAGADO ✓';
-  else if (d.pago && !isNaN(d.pago)) cobroEl.textContent = 'VALOR POR COBRAR: $' + Number(d.pago).toLocaleString('es-CO');
-  else cobroEl.textContent = 'VALOR POR COBRAR: —';
+  if (d.pago === 'PAGADO') {
+    cobroEl.textContent = 'PAGADO ✓';
+  } else if (d.esCOD && d.codValueTotal) {
+    // Valor total a cobrar = productos + envío con COD (ya calculado al generar guía)
+    cobroEl.textContent = 'VALOR POR COBRAR: $' + Number(d.codValueTotal).toLocaleString('es-CO');
+  } else if (d.pago && !isNaN(d.pago)) {
+    cobroEl.textContent = 'VALOR POR COBRAR: $' + Number(d.pago).toLocaleString('es-CO');
+  } else {
+    cobroEl.textContent = 'VALOR POR COBRAR: —';
+  }
 }
 
 function abrirWhatsApp() {
@@ -1592,8 +1619,16 @@ async function confirmarYGenerar() {
     }
     const tracker = guiaData.data?.tracker || 'N/A';
     const urlGuia = guiaData.data?.url || '';
-    // Actualizar etiqueta con transportadora y número de guía
-    if (datosExtraidos) { datosExtraidos.tracker = tracker; datosExtraidos.transportadora = transportadora; actualizarEtiqueta(datosExtraidos); }
+    // Calcular valor total a cobrar al cliente (COD): valor productos/cobro + flete + comisión COD
+    const comisionCODlbl = datos.esCOD ? Number(rate.codDetails?.codCost || 0) : 0;
+    const codValueTotal = datos.esCOD ? (Number(datos.codValue) + Number(flete) + comisionCODlbl) : 0;
+    // Actualizar etiqueta con transportadora, guía y valor total COD
+    if (datosExtraidos) {
+      datosExtraidos.tracker = tracker;
+      datosExtraidos.transportadora = transportadora;
+      datosExtraidos.codValueTotal = codValueTotal;
+      actualizarEtiqueta(datosExtraidos);
+    }
 
     // --- REGISTRO EN GOOGLE SHEET (en paralelo, no bloqueante) ---
     try {
@@ -1634,9 +1669,13 @@ async function confirmarYGenerar() {
       </div>`;
 
     let acciones = '';
-    if (urlGuia) acciones += `<a href="${urlGuia}" target="_blank" class="btn-download">📄 Descargar guía PDF</a>`;
-    acciones += `<button class="btn-secondary" onclick="switchTab('etiqueta')">👁️ Ver etiqueta</button>`;
-    acciones += `<button class="btn-secondary" onclick="imprimirEtiqueta()">🖨️ Imprimir etiqueta</button>`;
+    if (urlGuia) {
+      acciones += `<button class="btn-main" style="flex:1" onclick="imprimirGuiaYEtiqueta('${urlGuia}')">🖨️ Imprimir guía + etiqueta</button>`;
+      acciones += `<a href="${urlGuia}" target="_blank" class="btn-download">📄 Solo guía PDF</a>`;
+    }
+    acciones += `<button class="btn-secondary" onclick="imprimirEtiqueta()">🏷️ Solo etiqueta</button>`;
+    acciones += `<button class="btn-secondary" onclick="switchTab('etiqueta')">👁️ Ver</button>`;
+    acciones += `<button class="btn-main" style="flex:1;background:var(--green);border-color:var(--green)" onclick="nuevaGuia()">✚ Nueva guía (limpiar todo)</button>`;
     document.getElementById('finalActions').innerHTML = acciones;
 
     mensajeParaCopiar = generarMensaje(datos.cliente.nombre, tracker, transportadora, datos.esCOD, datos.codValue);
@@ -1694,6 +1733,25 @@ function resetForm() {
   datosExtraidos = null;
   mensajeParaCopiar = '';
   resetProductos();
+}
+
+// Limpia TODO y prepara para una nueva guía desde cero
+function nuevaGuia() {
+  resetForm();
+  // Limpiar campos de resultado/verificación
+  ['r_nombre','r_cedula','r_direccion','r_barrio','r_ciudad','r_telefono'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  // Ocultar mensaje cliente y limpiar indicadores de ciudad
+  document.getElementById('mensajeCliente')?.classList.add('hidden');
+  ['r_ciudad_ok','r_ciudad_err','r_ciudad_match','r_nombre_preview'].forEach(id => {
+    const el = document.getElementById(id); if (el) { el.style.display = 'none'; el.textContent = ''; }
+  });
+  document.getElementById('btnProcesar').disabled = false;
+  // Volver a la pestaña Nuevo despacho y subir
+  switchTab('nuevo');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  showStatus('Listo para un nuevo despacho', 'success');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1805,12 +1863,9 @@ function actualizarEtiquetaProductos() {
   if (manualProds.length > 0) {
     el.innerHTML = buildProdTableHTML(manualProds);
   } else {
-    const extraidos = (datosExtraidos?.productos || []).filter(Boolean);
-    if (extraidos.length > 0) {
-      const rows = extraidos.map(p => {
-        const m = p.match(/^(\d+)\s+(.+?)(?:\s+([\w\-]+))?$/);
-        return m ? {cant:m[1], nombre:m[2], codigo:m[3]||''} : {cant:'1', nombre:p, codigo:''};
-      });
+    const objs = datosExtraidos?.productosObj || [];
+    if (objs.length > 0) {
+      const rows = objs.filter(p => p && p.nombre).map(p => ({ cant: p.cant || '1', nombre: p.nombre, codigo: p.codigo || '' }));
       el.innerHTML = buildProdTableHTML(rows);
     } else {
       el.textContent = '—';
@@ -1838,6 +1893,21 @@ function actualizarEtiqueta(d) {
 }
 
 // Sobreescribir imprimirEtiqueta para incluir tabla de productos
+// Imprime la guía de EnvioClick Y la etiqueta 4x6, ambas directo a impresión
+function imprimirGuiaYEtiqueta(urlGuia) {
+  // Primero lanza la etiqueta (genera su propia ventana de impresión)
+  imprimirEtiqueta();
+  // Luego abre la guía PDF en ventana nueva y lanza impresión
+  if (urlGuia) {
+    setTimeout(() => {
+      const win = window.open(urlGuia, '_blank');
+      if (win) {
+        win.addEventListener('load', () => { setTimeout(() => { try { win.print(); } catch(e){} }, 800); });
+      }
+    }, 600);
+  }
+}
+
 function imprimirEtiqueta() {
   const nombre = document.getElementById('e_nombre').textContent;
   const dir = document.getElementById('e_dir').textContent;
@@ -1868,12 +1938,9 @@ function imprimirEtiqueta() {
     prodHTML += '</tbody></table>';
   } else {
     // Intentar usar productos extraídos por Claude como tabla
-    const extraidos = (datosExtraidos?.productos || []).filter(Boolean);
-    if (extraidos.length > 0) {
-      const rows = extraidos.map(p => {
-        const m = p.match(/^(\d+)\s+(.+?)(?:\s+([\w\-]+))?$/);
-        return m ? {cant:m[1], nombre:m[2], codigo:m[3]||''} : {cant:'1', nombre:p, codigo:''};
-      });
+    const objs = datosExtraidos?.productosObj || [];
+    const rows = objs.filter(p => p && p.nombre).map(p => ({ cant: p.cant || '1', nombre: p.nombre, codigo: p.codigo || '' }));
+    if (rows.length > 0) {
       prodHTML = `<table style="width:100%;border-collapse:collapse;font-size:8px;margin-top:2px">
         <thead><tr>
           <th style="font-weight:800;text-transform:uppercase;letter-spacing:0.5px;color:#000;padding:1px 3px;border-bottom:1px solid #000;text-align:center;width:24px">Cant</th>
@@ -1965,10 +2032,15 @@ function verificarCiudad() {
   if (dane) {
     // Find the exact key that matched
     const k = normCiudad(val);
-    const exactKey = municipiosCache[k] ? val : Object.keys(municipiosCache).find(key => key.includes(k) || k.includes(key)) || val;
+    const valNorm = String(val).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[.,]/g,'').trim();
+    const huboAlias = CIUDAD_ALIAS[valNorm] && CIUDAD_ALIAS[valNorm] !== valNorm;
+    const exactKey = municipiosCache[k] ? k : Object.keys(municipiosCache).find(key => key.includes(k) || k.includes(key)) || val;
     okEl.style.display = 'inline';
     errEl.style.display = 'none';
-    matchEl.textContent = 'DANE: ' + dane + (exactKey !== val ? ' · Se usará: ' + exactKey : '');
+    let txt = 'DANE: ' + dane;
+    if (huboAlias) txt += ' · "' + val + '" = ' + exactKey.charAt(0).toUpperCase() + exactKey.slice(1);
+    else if (exactKey !== valNorm) txt += ' · Se usará: ' + exactKey;
+    matchEl.textContent = txt;
     matchEl.style.display = 'block';
     matchEl.style.color = 'var(--green)';
   } else {
@@ -2146,6 +2218,76 @@ document.addEventListener('paste', function(e) {
   });
 });
 
+function imprimirGuiaYEtiquetaMasivo(i) {
+  const p = pedidosMasivos[i];
+  if (!p) return;
+  // Imprime la etiqueta de este pedido (usa la función masiva con un solo pedido)
+  imprimirEtiquetaIndividualMasivo(p);
+  // Luego la guía PDF
+  if (p.urlGuia) {
+    setTimeout(() => {
+      const win = window.open(p.urlGuia, '_blank');
+      if (win) win.addEventListener('load', () => { setTimeout(() => { try { win.print(); } catch(e){} }, 800); });
+    }, 600);
+  }
+}
+
+function imprimirEtiquetaIndividualMasivo(p) {
+  const d = p.datos;
+  if (!d?.cliente?.nombre) { alert('Pedido sin datos'); return; }
+  const logoSrc = document.querySelector('.et-logo img')?.src || '';
+  const nombre = d.cliente?.nombre || '—';
+  const dir = [d.cliente?.direccion, d.cliente?.barrio].filter(Boolean).join(' · ') || '—';
+  const ciudad = d.cliente?.ciudad_nombre || '—';
+  const tel = d.cliente?.telefono || '—';
+  const cobro = p.pago === 'PAGADO' ? 'PAGADO ✓' : (p.codValueTotal ? `VALOR POR COBRAR: $${Number(p.codValueTotal).toLocaleString('es-CO')}` : (p.cobro ? `VALOR POR COBRAR: $${Number(p.cobro).toLocaleString('es-CO')}` : 'VALOR POR COBRAR: —'));
+  const prods = (d.productos || []).filter(x => x.nombre);
+  let prodHTML = '<span>—</span>';
+  if (prods.length) {
+    prodHTML = `<table style="width:100%;border-collapse:collapse;font-size:8px;margin-top:2px"><thead><tr>
+      <th style="font-weight:800;text-transform:uppercase;color:#000;padding:1px 3px;border-bottom:1px solid #000;text-align:center;width:24px">Cant</th>
+      <th style="font-weight:800;text-transform:uppercase;color:#000;padding:1px 3px;border-bottom:1px solid #000;text-align:left">Producto</th>
+      <th style="font-weight:800;text-transform:uppercase;color:#000;padding:1px 3px;border-bottom:1px solid #000;text-align:right;width:52px">Código</th>
+      </tr></thead><tbody>${prods.map((pr,idx) => `<tr><td style="text-align:center;font-weight:800;padding:2px 3px">${escHtml(pr.cant)||'1'}</td><td style="padding:2px 3px;font-weight:600;color:#000">${escHtml(pr.nombre)}</td><td style="text-align:right;padding:2px 3px;font-size:7px;color:#000">${escHtml(pr.codigo)}</td></tr>`).join('')}</tbody></table>`;
+  }
+  const guiaInfo = p.tracker ? `<div><div class="lbl">Transportadora / Guía</div><div class="val" style="font-size:10px">${escHtml(p.transportadora||'')} · ${escHtml(p.tracker)}</div></div>` : '';
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>Etiqueta Ferreco</title>
+  <style>@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&display=swap');
+    @page { size: 4in 6in; margin: 0; }
+    * { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
+    body { font-family:'Montserrat',sans-serif; }
+    .et { width:4in; height:6in; padding:0.22in; display:flex; flex-direction:column; gap:7px; position:relative; background:white; color:#000; }
+    .logo img { height:58px; width:auto; display:block; filter:brightness(0); }
+    .divider { border-top:2.5px solid #000; margin:2px 0; }
+    .fragil { position:absolute; top:0.22in; right:0.22in; display:flex; flex-direction:column; gap:3px; align-items:flex-end; transform:rotate(-5deg); }
+    .fragil-b { background:#000 !important; color:white !important; font-weight:800; font-size:11px; padding:3px 8px; letter-spacing:1px; }
+    .prior-b  { background:#000 !important; color:white !important; font-weight:800; font-size:10px; padding:3px 8px; letter-spacing:1px; }
+    .lbl { font-size:7px; font-weight:800; text-transform:uppercase; letter-spacing:1px; color:#000; margin-bottom:1px; }
+    .val { font-size:12px; font-weight:700; line-height:1.3; color:#000; }
+    .cobro { font-size:14px; font-weight:900; border-top:1.5px solid #000; padding-top:7px; margin-top:4px; }
+    .prioridad { background:#000 !important; color:white !important; font-weight:900; font-size:20px; letter-spacing:3px; padding:8px 10px; text-align:center; margin-top:auto; }
+    .redes { font-size:7px; color:#000; text-align:right; margin-top:3px; font-weight:600; line-height:1.6; }
+  </style></head><body>
+  <div class="et">
+    <div class="logo"><img src="${logoSrc}"></div>
+    <div class="divider"></div>
+    <div class="fragil"><div class="fragil-b">FRÁGIL</div><div class="prior-b">PRIORITARIO</div></div>
+    <div><div class="lbl">Cliente</div><div class="val">${escHtml(nombre)}</div></div>
+    <div><div class="lbl">Dirección</div><div class="val">${escHtml(dir)}</div></div>
+    <div><div class="lbl">Ciudad</div><div class="val">${escHtml(ciudad)}</div></div>
+    <div><div class="lbl">Teléfono</div><div class="val">${escHtml(tel)}</div></div>
+    ${guiaInfo}
+    <div><div class="lbl">Productos</div><div class="val">${prodHTML}</div></div>
+    <div class="cobro">${cobro}</div>
+    <div><div class="lbl">Remite</div><div class="val" style="font-size:10px">DISTRIBUCIONES FERRECO SAS<br>CALLE 72 # 65B-52 · BOGOTÁ</div></div>
+    <div class="prioridad">¡GRACIAS!</div>
+    <div class="redes">TIKTOK: @FERRECO.COM&nbsp;&nbsp;&nbsp;INSTAGRAM: @FERRECO&nbsp;&nbsp;&nbsp;WEB: Ferreco.com</div>
+  </div></body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
 function abrirWhatsAppMasivo(i) {
   const p = pedidosMasivos[i];
   const tel = p.datos?.cliente?.telefono || '';
@@ -2162,10 +2304,66 @@ function abrirWhatsAppMasivo(i) {
 
 async function procesarMasivo() {
   const texto = document.getElementById('masivoTexto').value.trim();
-  if (!texto) { alert('Pega los pedidos primero'); return; }
   const claudeKey = getClaudeKey();
+  const hayImagenes = masivoImagenes.length > 0;
 
-  // Separar bloques por línea en blanco
+  if (!texto && !hayImagenes) { alert('Pega los pedidos o adjunta imágenes primero'); return; }
+
+  // MODO IMÁGENES: cada imagen puede contener uno o más pedidos.
+  // Hacemos UNA llamada con todas las imágenes y pedimos un array de pedidos.
+  if (hayImagenes) {
+    document.getElementById('masivoActionsGlobal').style.display = 'none';
+    document.getElementById('masivoPedidosList').innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-weight:600">⏳ Analizando ' + masivoImagenes.length + ' imagen(es) con IA...</div>';
+
+    const systemImg = `Eres asistente logístico de Ferreco. Te paso una o varias imágenes (pantallazos de pedidos/conversaciones) y opcionalmente texto.
+Cada imagen puede contener UNO O VARIOS pedidos de clientes distintos.
+Extrae TODOS los pedidos que encuentres y devuelve un ARRAY JSON, un objeto por pedido:
+[{"cliente":{"nombre":"","cedula":null,"direccion":"","barrio":"","ciudad_nombre":"","telefono":""},"productos":[{"cant":"1","nombre":"","codigo":""}],"confirmacion_requerida":false}]
+Para ciudad_nombre usa el nombre completo con departamento (ej: "Cali, Valle del Cauca").
+Para cada producto:
+- cant: número de unidades/cantidad. Si no se indica, usa "1".
+- nombre: nombre del producto.
+- codigo: referencia, código, SKU, REF o código de barras si aparece. Si no, vacío.
+Pon confirmacion_requerida:true en un pedido si algún dato crítico (nombre, dirección, ciudad, teléfono) no está claro en la imagen.
+RESPONDE SÓLO el array JSON, sin texto adicional ni backticks.`;
+
+    const userContent = [
+      ...masivoImagenes.map(img => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.base64 } }))
+    ];
+    if (texto) userContent.push({ type: 'text', text: 'Texto adicional de contexto:\n' + texto });
+    else userContent.push({ type: 'text', text: 'Extrae todos los pedidos de las imágenes.' });
+
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 4096, system: systemImg, messages: [{ role: 'user', content: userContent }] })
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error?.message || 'Error Claude');
+      const rawText = d.content[0].text.trim();
+      const arrMatch = rawText.match(/\[[\s\S]*\]/);
+      const objMatch = rawText.match(/\{[\s\S]*\}/);
+      let arr;
+      if (arrMatch) arr = JSON.parse(arrMatch[0]);
+      else if (objMatch) arr = [JSON.parse(objMatch[0])];
+      else throw new Error('No se detectaron pedidos en las imágenes');
+
+      pedidosMasivos = arr.map((item, i) => ({
+        id: i, texto: '(desde imagen)', datos: item, pago: null, cobro: '',
+        transportadora: 'AUTO', canal: 'TIKTOK',
+        estado: item.confirmacion_requerida ? 'confirmacion' : 'listo',
+        tracker: '', urlGuia: ''
+      }));
+      renderPedidosMasivos();
+      document.getElementById('masivoActionsGlobal').style.display = 'flex';
+    } catch (e) {
+      document.getElementById('masivoPedidosList').innerHTML = '<div style="padding:20px;text-align:center;color:var(--error);font-weight:600">❌ ' + escHtml(e.message) + '</div>';
+    }
+    return;
+  }
+
+  // MODO TEXTO: separar bloques por línea en blanco
   const bloques = texto.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
   if (!bloques.length) { alert('No se encontraron pedidos'); return; }
 
@@ -2173,61 +2371,30 @@ async function procesarMasivo() {
   renderPedidosMasivos();
   document.getElementById('masivoActionsGlobal').style.display = 'none';
 
-  // Extraer datos con Claude para cada pedido en paralelo (lotes de 3)
-  const hayImagenes = masivoImagenes.length > 0;
   const system = `Eres asistente logístico de Ferreco. Extrae datos del destinatario.
 RESPONDE SOLO JSON sin texto adicional:
-{"cliente":{"nombre":"","direccion":"","barrio":"","ciudad_nombre":"","telefono":""},"productos":[{"cant":"1","nombre":"","codigo":""}],"confirmacion_requerida":${hayImagenes ? 'true' : 'false'}}
+{"cliente":{"nombre":"","cedula":null,"direccion":"","barrio":"","ciudad_nombre":"","telefono":""},"productos":[{"cant":"1","nombre":"","codigo":""}],"confirmacion_requerida":false}
+Para ciudad_nombre usa nombre completo con departamento (ej: "Cali, Valle del Cauca").
 Para cada producto:
-- cant: número de unidades/cantidad (si dice "2 unidades", "x2", "cantidad: 3" → ese número). Si no se indica, usa "1".
+- cant: número de unidades/cantidad. Si no se indica, usa "1".
 - nombre: nombre del producto.
-- codigo: si aparece referencia, código, SKU, REF, código de barras o número de referencia → va aquí. Si no hay, deja vacío.
-${hayImagenes ? 'Si hay imágenes, revisa los productos: verifica que cantidad y código coincidan con lo visible. Si no coinciden pon confirmacion_requerida:true.' : ''}`;
+- codigo: referencia, código, SKU, REF o código de barras si aparece. Si no, vacío.`;
 
   for (let i = 0; i < pedidosMasivos.length; i++) {
     pedidosMasivos[i].estado = 'extrayendo';
     renderPedidoCard(i);
     try {
-      // Build content array: text + images (if any, only first call gets all images)
-      let userContent;
-      if (hayImagenes && i === 0) {
-        userContent = [
-          ...masivoImagenes.map(img => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.base64 } })),
-          { type: 'text', text: 'Pedidos a procesar (extrae datos de cada uno):\n\n' + pedidosMasivos.map((p,j) => `Pedido ${j+1}:\n${p.texto}`).join('\n\n') }
-        ];
-      } else {
-        userContent = pedidosMasivos[i].texto;
-      }
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: hayImagenes && i === 0 ? 2048 : 512, system, messages: [{ role: 'user', content: userContent }] })
+        body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 512, system, messages: [{ role: 'user', content: pedidosMasivos[i].texto }] })
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error?.message || 'Error Claude');
-      const rawText = d.content[0].text.trim();
-      // If images mode and first call: try to parse array of all pedidos
-      if (hayImagenes && i === 0) {
-        // Try array first [{...},{...}], then single object
-        const arrMatch = rawText.match(/\[[\s\S]*\]/);
-        const objMatch = rawText.match(/\{[\s\S]*\}/);
-        if (arrMatch) {
-          const arr = JSON.parse(arrMatch[0]);
-          arr.forEach((item, j) => { if (pedidosMasivos[j]) { pedidosMasivos[j].datos = item; pedidosMasivos[j].estado = item.confirmacion_requerida ? 'confirmacion' : 'listo'; } });
-          // skip remaining iterations handled by this batch
-          i = pedidosMasivos.length - 1;
-          renderPedidosMasivos();
-          continue;
-        } else if (objMatch) {
-          pedidosMasivos[i].datos = JSON.parse(objMatch[0]);
-          pedidosMasivos[i].estado = pedidosMasivos[i].datos.confirmacion_requerida ? 'confirmacion' : 'listo';
-        } else throw new Error('Sin JSON');
-      } else {
-        const match = rawText.match(/\{[\s\S]*\}/);
-        if (!match) throw new Error('Sin JSON');
-        pedidosMasivos[i].datos = JSON.parse(match[0]);
-        pedidosMasivos[i].estado = pedidosMasivos[i].datos.confirmacion_requerida ? 'confirmacion' : 'listo';
-      }
+      const match = d.content[0].text.trim().match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('Sin JSON');
+      pedidosMasivos[i].datos = JSON.parse(match[0]);
+      pedidosMasivos[i].estado = pedidosMasivos[i].datos.confirmacion_requerida ? 'confirmacion' : 'listo';
     } catch (e) {
       pedidosMasivos[i].estado = 'error';
       pedidosMasivos[i].errorMsg = e.message;
@@ -2291,6 +2458,7 @@ function renderPedidoCard(i) {
   card.innerHTML = `
     <div class="masivo-pedido-header">
       <div class="masivo-pedido-num">Pedido ${i+1}</div>
+      ${p.urlGuia ? `<button onclick="imprimirGuiaYEtiquetaMasivo(${i})" style="font-size:10px;padding:4px 10px;background:var(--navy);color:white;border:none;border-radius:6px;cursor:pointer;font-family:'Montserrat',sans-serif;font-weight:700">🖨️ Guía+Etiqueta</button>` : ''}
       ${p.urlGuia ? `<a href="${p.urlGuia}" target="_blank" class="btn-download" style="font-size:10px;padding:4px 10px">📄 PDF guía</a>` : ''}
       ${p.estado === 'ok' ? `<button onclick="abrirWhatsAppMasivo(${i})" style="font-size:10px;padding:4px 10px;background:var(--green);color:white;border:none;border-radius:6px;cursor:pointer;font-family:'Montserrat',sans-serif;font-weight:700">💬 WhatsApp</button>` : ''}
     </div>
@@ -2375,6 +2543,10 @@ async function generarGuiaMasivo(p, envioKey) {
   if (guiaData.status !== 'OK') throw new Error('Guía: ' + JSON.stringify(guiaData.status_messages||guiaData));
   p.tracker = guiaData.data?.tracker || 'N/A';
   p.urlGuia = guiaData.data?.url || '';
+  // Valor total a cobrar (COD): cobro + flete + comisión recaudo
+  const comCODm = esCOD ? Number(resultado.rate.codDetails?.codCost || 0) : 0;
+  p.codValueTotal = esCOD ? (codValue + Number(resultado.rate.flete || 0) + comCODm) : 0;
+  p.transportadora = resultado.rate.carrier || p.transportadora;
   p.estado = 'ok';
   renderPedidoCard(p.id);
 
@@ -2404,7 +2576,7 @@ function imprimirEtiquetasMasivo() {
     const dir = [d.cliente?.direccion, d.cliente?.barrio].filter(Boolean).join(' · ') || '—';
     const ciudad = d.cliente?.ciudad_nombre || '—';
     const tel = d.cliente?.telefono || '—';
-    const cobro = p.pago === 'PAGADO' ? 'PAGADO ✓' : p.cobro ? `VALOR POR COBRAR: $${Number(p.cobro).toLocaleString('es-CO')}` : 'VALOR POR COBRAR: —';
+    const cobro = p.pago === 'PAGADO' ? 'PAGADO ✓' : (p.codValueTotal ? `VALOR POR COBRAR: $${Number(p.codValueTotal).toLocaleString('es-CO')}` : (p.cobro ? `VALOR POR COBRAR: $${Number(p.cobro).toLocaleString('es-CO')}` : 'VALOR POR COBRAR: —'));
     const prods = (d.productos || []).filter(x => x.nombre);
     let prodHTML;
     if (prods.length) {
