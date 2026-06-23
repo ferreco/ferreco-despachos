@@ -260,6 +260,30 @@
   .btn-add-prod { margin-top: 6px; padding: 8px 14px; background: var(--navy-light); color: var(--navy); border: 1.5px solid var(--border); border-radius: 7px; font-family: 'Montserrat', sans-serif; font-size: 11px; font-weight: 700; cursor: pointer; }
   .btn-add-prod:hover { background: #d0d8e8; }
 
+  /* Selector rápido de productos del catálogo */
+  .catpick { margin-bottom: 14px; }
+  .catpick-search-row { display: grid; grid-template-columns: 1fr 150px; gap: 8px; }
+  .catpick-search { background: var(--mid); border: 1.5px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: 'Montserrat', sans-serif; font-size: 12px; font-weight: 600; color: var(--black); outline: none; }
+  .catpick-search:focus { border-color: var(--navy); background: white; }
+  .catpick-cat { background: var(--mid); border: 1.5px solid var(--border); border-radius: 8px; padding: 10px 8px; font-family: 'Montserrat', sans-serif; font-size: 11px; font-weight: 700; color: var(--navy); outline: none; cursor: pointer; }
+  .catpick-favs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .catpick-fav { display: inline-flex; align-items: center; gap: 5px; background: var(--green-light); border: 1.5px solid var(--green); color: var(--green-dark); border-radius: 20px; padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer; font-family: 'Montserrat', sans-serif; }
+  .catpick-fav:hover { background: var(--green); color: white; }
+  .catpick-results { margin-top: 8px; max-height: 230px; overflow-y: auto; border-radius: 8px; }
+  .catpick-results:not(:empty) { border: 1.5px solid var(--border); }
+  .catpick-item { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.12s; }
+  .catpick-item:last-child { border-bottom: none; }
+  .catpick-item:hover { background: var(--navy-light); }
+  .catpick-item-info { flex: 1; min-width: 0; }
+  .catpick-item-name { font-size: 12px; font-weight: 700; color: var(--black); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .catpick-item-sku { font-size: 10px; font-weight: 600; color: var(--muted); }
+  .catpick-star { font-size: 15px; line-height: 1; cursor: pointer; opacity: 0.4; padding: 2px; }
+  .catpick-star.on { opacity: 1; }
+  .catpick-add { background: var(--navy); color: white; border: none; border-radius: 6px; width: 28px; height: 28px; font-size: 18px; font-weight: 700; line-height: 1; cursor: pointer; flex-shrink: 0; }
+  .catpick-add:hover { background: var(--green); }
+  .catpick-empty { padding: 12px; font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; }
+  .prod-divider { margin: 14px 0 8px; font-size: 10px; font-weight: 800; color: var(--navy); text-transform: uppercase; letter-spacing: 1px; border-top: 1px solid var(--border); padding-top: 12px; }
+
   /* Paste zone (Ctrl+V imágenes) */
   .paste-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 10px 14px; background: var(--mid); font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; margin-top: 8px; transition: all 0.2s; cursor: default; }
   .paste-zone.paste-active { border-color: var(--green); background: var(--green-light); color: var(--green-dark); }
@@ -435,7 +459,22 @@ function checkPwd() {
       </div>
     </div>
 
-
+    <!-- Card: Productos del pedido (catálogo rápido) -->
+    <div class="card" id="cardProductos">
+      <div class="card-title">Productos del pedido</div>
+      <div class="catpick">
+        <div class="catpick-search-row">
+          <input type="text" id="catpickSearch" class="catpick-search" placeholder="🔍 Buscar producto del catálogo (nombre o código)…" oninput="renderCatpickResultados()" autocomplete="off" />
+          <select id="catpickCat" class="catpick-cat" onchange="renderCatpickResultados()"><option value="">Todas</option></select>
+        </div>
+        <div class="catpick-favs" id="catpickFavs"></div>
+        <div class="catpick-results" id="catpickResults"></div>
+      </div>
+      <div class="prod-divider">Productos en esta guía</div>
+      <div class="prod-row-header"><span>Cant</span><span>Producto</span><span>Código</span><span></span></div>
+      <div id="prodEntryList"></div>
+      <button type="button" class="btn-add-prod" onclick="agregarFilaProd('1','','')">+ Agregar producto manual</button>
+    </div>
 
     <!-- Card: Canal del pedido -->
     <div class="card" style="padding:10px 14px">
@@ -774,6 +813,7 @@ Carrera 15 #80-45, El Poblado, Medellín
   </div>
 </div>
 
+<script src="productos-catalogo.js"></script>
 <script>
 let tipoSeleccionado = 'GUIA';
 let pagoSeleccionado = null;
@@ -1787,6 +1827,11 @@ async function confirmarYGenerar() {
       const comisionCOD = datos.esCOD ? Number(rate.codDetails?.codCost || 0) : 0;
       const valorEnvioTotal = Number(flete) + comisionCOD;
       const total = valorProdParaTotal + valorEnvioTotal;
+      // Productos finales = la lista de la etiqueta (incluye los elegidos del catálogo); si está vacía, los de Claude
+      const prodsFinales = productosEtiqueta.filter(p => p.nombre);
+      const productosStr = prodsFinales.length
+        ? prodsFinales.map(p => (p.cant && String(p.cant) !== '1' ? p.cant + ' x ' : '') + p.nombre + (p.codigo ? ' (' + p.codigo + ')' : '')).join(' | ')
+        : (datos.productos || []).filter(Boolean).join(' | ');
       registrarDespacho({
         fecha: new Date().toISOString(),
         nombre: datos.cliente.nombre,
@@ -1794,7 +1839,7 @@ async function confirmarYGenerar() {
         telefono: datos.cliente.telefono,
         ciudad: datos.cliente.ciudad_nombre,
         direccion: datos.cliente.direccion,
-        productos: (datos.productos || []).filter(Boolean).join(' | '),
+        productos: productosStr,
         valorProductos: valorProdReg,
         valorEnvio: valorEnvioTotal,
         total: total,
@@ -1885,6 +1930,9 @@ function resetForm() {
   datosExtraidos = null;
   mensajeParaCopiar = '';
   resetProductos();
+  const cs = document.getElementById('catpickSearch'); if (cs) cs.value = '';
+  const cc = document.getElementById('catpickCat'); if (cc) cc.value = '';
+  renderCatpickResultados();
 }
 
 // Limpia TODO y prepara para una nueva guía desde cero
@@ -1991,6 +2039,96 @@ function resetProductos() {
   renderFilasProd();
 }
 
+// ─── Selector rápido de productos del catálogo ───
+const CATPICK_FAVS_KEY = 'ferreco_prod_favs';
+
+function catpickProductos() { return (window.CATALOGO_PRODUCTOS || []); }
+function catLabel(slug) {
+  return String(slug || '').split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' / ');
+}
+function escAttr(s) { return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+function recortarTxt(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+function quitarTildes(s) { return String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu, ''); }
+
+function catpickFavs() {
+  try { return JSON.parse(localStorage.getItem(CATPICK_FAVS_KEY) || '[]'); } catch (e) { return []; }
+}
+function catpickGuardarFavs(arr) { localStorage.setItem(CATPICK_FAVS_KEY, JSON.stringify(arr)); }
+function esFav(sku) { return catpickFavs().includes(sku); }
+function toggleFav(sku, ev) {
+  if (ev) ev.stopPropagation();
+  const favs = catpickFavs();
+  const i = favs.indexOf(sku);
+  if (i >= 0) favs.splice(i, 1); else favs.push(sku);
+  catpickGuardarFavs(favs);
+  renderCatpickFavs();
+  renderCatpickResultados();
+}
+
+function initCatpick() {
+  const sel = document.getElementById('catpickCat');
+  if (sel && (window.CATALOGO_CATEGORIAS || []).length && sel.options.length <= 1) {
+    (window.CATALOGO_CATEGORIAS || []).forEach(c => {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = catLabel(c);
+      sel.appendChild(o);
+    });
+  }
+  renderCatpickFavs();
+  renderCatpickResultados();
+}
+
+function renderCatpickFavs() {
+  const cont = document.getElementById('catpickFavs');
+  if (!cont) return;
+  const favs = catpickFavs();
+  const prods = catpickProductos().filter(p => favs.includes(p.sku));
+  cont.innerHTML = prods.map(p =>
+    `<button type="button" class="catpick-fav" onclick="agregarProductoCatalogo('${escAttr(p.sku)}')" title="${escAttr(p.name)}">⭐ ${escHtml(recortarTxt(p.name, 26))} +</button>`
+  ).join('');
+}
+
+function renderCatpickResultados() {
+  const cont = document.getElementById('catpickResults');
+  if (!cont) return;
+  const q = (document.getElementById('catpickSearch')?.value || '').trim().toLowerCase();
+  const cat = document.getElementById('catpickCat')?.value || '';
+  if (!q && !cat) { cont.innerHTML = ''; return; }  // sin búsqueda ni filtro → solo se ven los favoritos de arriba
+  let prods = catpickProductos();
+  if (cat) prods = prods.filter(p => p.cat === cat);
+  if (q) {
+    const qn = quitarTildes(q);
+    prods = prods.filter(p => quitarTildes((p.name + ' ' + p.sku).toLowerCase()).includes(qn));
+  }
+  const total = prods.length;
+  prods = prods.slice(0, 40);
+  if (prods.length === 0) { cont.innerHTML = '<div class="catpick-empty">Sin resultados — escríbelo a mano abajo.</div>'; return; }
+  cont.innerHTML = prods.map(p => {
+    const fav = esFav(p.sku);
+    return `<div class="catpick-item" onclick="agregarProductoCatalogo('${escAttr(p.sku)}')">
+      <span class="catpick-star${fav ? ' on' : ''}" onclick="toggleFav('${escAttr(p.sku)}', event)" title="Marcar como frecuente">${fav ? '⭐' : '☆'}</span>
+      <div class="catpick-item-info">
+        <div class="catpick-item-name">${escHtml(p.name)}</div>
+        <div class="catpick-item-sku">${escHtml(p.sku)}${p.cat ? ' · ' + escHtml(catLabel(p.cat)) : ''}</div>
+      </div>
+      <button type="button" class="catpick-add" title="Agregar">+</button>
+    </div>`;
+  }).join('') + (total > prods.length ? `<div class="catpick-empty">+${total - prods.length} más — afina la búsqueda</div>` : '');
+}
+
+function agregarProductoCatalogo(sku) {
+  const p = catpickProductos().find(x => x.sku === sku);
+  if (!p) return;
+  // Si ya está en la lista (mismo código y nombre) incrementa la cantidad; si no, agrega fila
+  const existente = productosEtiqueta.find(r => r.codigo === p.sku && r.nombre === p.name);
+  if (existente) {
+    existente.cant = String((parseInt(existente.cant) || 0) + 1);
+    renderFilasProd();
+  } else {
+    agregarFilaProd('1', p.name, p.sku);
+  }
+}
+
 function escHtml(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -2025,22 +2163,21 @@ function actualizarEtiquetaProductos() {
   }
 }
 
-// Sobreescribir actualizarEtiqueta para también poblar las filas si hay productos de Claude
+// Sobreescribir actualizarEtiqueta para mergear los productos de Claude a la lista editable (sin duplicar)
 function actualizarEtiqueta(d) {
   _actualizarEtiquetaBase(d);
-  // Si hay productos de Claude y no hay filas manuales, poblar las filas
-  if (productosEtiqueta.length === 0 && d.productos?.length) {
-    const objs = d.productosObj || [];
-    if (objs.length > 0) {
-      objs.filter(p => p && p.nombre).forEach(p => agregarFilaProd(p.cant||'1', p.nombre, p.codigo||''));
-    } else {
-      d.productos.filter(Boolean).forEach(p => {
+  // Normaliza los productos extraídos por Claude a objetos {cant, nombre, codigo}
+  const objs = (d.productosObj && d.productosObj.length)
+    ? d.productosObj
+    : (d.productos || []).filter(Boolean).map(p => {
         const m = String(p).match(/^(\d+)\s+(.+?)(?:\s+([\w\-]+))?$/);
-        if (m) agregarFilaProd(m[1], m[2], m[3] || '');
-        else agregarFilaProd('1', p, '');
+        return m ? { cant: m[1], nombre: m[2], codigo: m[3] || '' } : { cant: '1', nombre: String(p), codigo: '' };
       });
-    }
-  }
+  // Agrega los que aún no estén en la lista (los del catálogo/manuales se conservan)
+  objs.filter(p => p && p.nombre).forEach(p => {
+    const yaEsta = productosEtiqueta.some(r => r.nombre.trim().toLowerCase() === String(p.nombre).trim().toLowerCase());
+    if (!yaEsta) agregarFilaProd(p.cant || '1', p.nombre, p.codigo || '');
+  });
   actualizarEtiquetaProductos();
 }
 
@@ -2790,7 +2927,7 @@ function imprimirEtiquetasMasivo() {
 
 
 // Inicializar una fila de productos al cargar
-window.addEventListener('load', () => { if (productosEtiqueta.length === 0) agregarFilaProd(); });
+window.addEventListener('load', () => { initCatpick(); });
 </script>
 </body>
 </html>
