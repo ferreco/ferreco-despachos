@@ -2100,14 +2100,30 @@ function renderCatpickResultados() {
   if (!q && !cat) { cont.innerHTML = ''; return; }  // sin búsqueda ni filtro → solo se ven los favoritos de arriba
   let prods = catpickProductos();
   if (cat) prods = prods.filter(p => p.cat === cat);
+  let aprox = false;
   if (q) {
-    const qn = quitarTildes(q);
-    prods = prods.filter(p => quitarTildes((p.name + ' ' + p.sku).toLowerCase()).includes(qn));
+    const STOP = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'y', 'o', 'con', 'para', 'un', 'una', 'x', 'en', 'a']);
+    const tokens = quitarTildes(q).split(/\s+/).filter(t => t && !STOP.has(t));
+    if (tokens.length) {
+      const txt = p => quitarTildes((p.name + ' ' + p.sku).toLowerCase());
+      // 1) Coincidencia: todos los términos presentes, en cualquier orden
+      let res = prods.filter(p => { const h = txt(p); return tokens.every(t => h.includes(t)); });
+      // 2) Si no hay exacta, mostrar aproximados (algún término) ordenados por relevancia
+      if (res.length === 0) {
+        aprox = true;
+        res = prods.map(p => { const h = txt(p); return { p, n: tokens.filter(t => h.includes(t)).length }; })
+          .filter(x => x.n > 0)
+          .sort((a, b) => b.n - a.n || a.p.name.localeCompare(b.p.name, 'es'))
+          .map(x => x.p);
+      }
+      prods = res;
+    }
   }
   const total = prods.length;
   prods = prods.slice(0, 40);
   if (prods.length === 0) { cont.innerHTML = '<div class="catpick-empty">Sin resultados — escríbelo a mano abajo.</div>'; return; }
-  cont.innerHTML = prods.map(p => {
+  const aviso = aprox ? '<div class="catpick-empty">Sin coincidencia exacta — te muestro lo más parecido:</div>' : '';
+  cont.innerHTML = aviso + prods.map(p => {
     const fav = esFav(p.sku);
     return `<div class="catpick-item" onclick="agregarProductoCatalogo('${escAttr(p.sku)}')">
       <span class="catpick-star${fav ? ' on' : ''}" onclick="toggleFav('${escAttr(p.sku)}', event)" title="Marcar como frecuente">${fav ? '⭐' : '☆'}</span>
