@@ -1316,6 +1316,30 @@ function generarMensaje(nombre, tracker, transportadora, esCOD, valorCobro) {
   msg += '*Equipo Ferreco*';
   return msg;
 }
+// Parser tolerante: si el JSON de Claude viene truncado, lo repara cerrando
+// strings/llaves/corchetes pendientes y, si hace falta, recortando hasta el
+// último objeto completo. Evita que un corte por límite de tokens rompa todo.
+function parseJSONtolerante(s) {
+  try { return JSON.parse(s); } catch (_) {}
+  for (let corte = s.length - 1; corte > 0; corte = s.lastIndexOf('}', corte - 1)) {
+    const frag = s.slice(0, corte + 1);
+    let inStr = false, esc = false;
+    const pila = [];
+    for (let i = 0; i < frag.length; i++) {
+      const ch = frag[i];
+      if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') inStr = true;
+      else if (ch === '{' || ch === '[') pila.push(ch);
+      else if (ch === '}' || ch === ']') pila.pop();
+    }
+    if (inStr) continue;  // el corte cayó dentro de un string: probar un cierre anterior
+    let cerrado = frag;
+    for (let i = pila.length - 1; i >= 0; i--) cerrado += pila[i] === '{' ? '}' : ']';
+    try { return JSON.parse(cerrado); } catch (_) {}
+  }
+  throw new Error('No se pudo leer la respuesta de Claude (JSON inválido). Reintenta el procesado.');
+}
+
 async function procesar() {
   const texto = document.getElementById('textInput').value.trim();
   const claudeKey = getClaudeKey();
@@ -1369,15 +1393,19 @@ RESPONDE ÚNICAMENTE con JSON válido sin texto adicional ni backticks:
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true'
       },
-      body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 1024, system, messages: [{ role: 'user', content }] })
+      body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 4096, system, messages: [{ role: 'user', content }] })
     });
 
     const data = await res.json();
     if (!res.ok) throw new Error(data.error?.message || 'Error en API');
-    const match = data.content[0].text.trim().match(/\{[\s\S]*\}/);
+    if (data.stop_reason === 'max_tokens') {
+      throw new Error('El pedido es muy largo y la respuesta se cortó. Quita texto innecesario (firmas, conversación de más) y vuelve a procesar.');
+    }
+    const respuesta = (data.content?.[0]?.text || '').trim();
+    const match = respuesta.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('Claude no devolvió JSON válido');
 
-    datosExtraidos = JSON.parse(match[0]);
+    datosExtraidos = parseJSONtolerante(match[0]);
     // Normalize productos: can be string[] or object[] depending on Claude response
     if (datosExtraidos.productos) {
       datosExtraidos.productosObj = datosExtraidos.productos.map(p => {
