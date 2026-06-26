@@ -303,6 +303,14 @@
   .fmodo-btn.active { border-color: var(--green); color: var(--green-dark); background: var(--green-light); box-shadow: 0 0 0 1px var(--green); }
   .factura-result { margin-top: 10px; font-size: 12px; font-weight: 600; line-height: 1.5; }
   .factura-result:empty { display: none; }
+  .factura-items { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+  .factura-items-lbl { font-size: 10px; font-weight: 800; color: var(--navy); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .fitem-row { display: grid; grid-template-columns: 30px minmax(0,1fr) 92px; gap: 6px; align-items: center; margin-bottom: 5px; }
+  .fitem-cant { font-size: 11px; font-weight: 800; color: var(--muted); text-align: right; }
+  .fitem-nombre { font-size: 11px; font-weight: 600; color: var(--black); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fitem-precio { background: white; border: 1.5px solid var(--cobro); border-radius: 6px; padding: 6px 8px; font-family: 'Montserrat', sans-serif; font-size: 12px; font-weight: 700; color: var(--black); outline: none; width: 100%; }
+  .fitem-precio:focus { border-color: var(--navy); }
+  .fitem-total { text-align: right; font-size: 13px; font-weight: 900; color: var(--green-dark); margin-top: 8px; }
   .factura-result .fr-ok { background: var(--green-light); border: 1.5px solid var(--green); color: var(--green-dark); border-radius: 8px; padding: 10px 12px; }
   .factura-result .fr-err { background: var(--cobro-light); border: 1.5px solid var(--cobro); color: var(--cobro); border-radius: 8px; padding: 10px 12px; }
   .factura-result .fr-load { background: white; border: 1.5px solid var(--border); color: var(--muted); border-radius: 8px; padding: 10px 12px; }
@@ -652,7 +660,8 @@ function checkPwd() {
             <button type="button" class="fmodo-btn active" id="fmodo-emitida" onclick="setModoFactura('emitida')">Emitida (DIAN)</button>
             <button type="button" class="fmodo-btn" id="fmodo-borrador" onclick="setModoFactura('borrador')">Borrador</button>
           </div>
-          <button type="button" class="btn-main" id="btnFactura" style="margin-top:10px" onclick="generarFactura()">🧾 Generar factura</button>
+          <div class="factura-items" id="facturaItems"></div>
+          <p class="factura-hint" style="margin-top:8px">Se generará al pulsar <strong>Confirmar y generar</strong>. Desactiva el interruptor si no quieres factura.</p>
           <div class="factura-result" id="facturaResult"></div>
         </div>
       </div>
@@ -1279,6 +1288,53 @@ function setTipo(tipo) {
 function toggleFacturaBlock() {
   const on = document.getElementById('facturaToggle').checked;
   document.getElementById('facturaBlock').style.display = on ? 'block' : 'none';
+  if (on) renderFacturaItems();
+}
+
+// Lista de productos a facturar con precio editable (dentro del bloque de factura)
+function renderFacturaItems() {
+  const cont = document.getElementById('facturaItems');
+  if (!cont) return;
+  const conNombre = productosEtiqueta.filter(p => p.nombre);
+  if (!conNombre.length) { cont.innerHTML = '<div class="factura-hint">Agrega productos arriba para poder facturarlos.</div>'; return; }
+  let total = 0;
+  let html = '<div class="factura-items-lbl">Precio de la factura (con IVA)</div>';
+  productosEtiqueta.forEach((p, i) => {
+    if (!p.nombre) return;
+    total += (parseInt(p.cant) || 1) * (parseFloat(p.precio) || 0);
+    html += `<div class="fitem-row">
+      <span class="fitem-cant">${escHtml(p.cant) || '1'}×</span>
+      <span class="fitem-nombre" title="${escAttr(p.nombre)}">${escHtml(p.nombre)}</span>
+      <input type="number" class="fitem-precio" value="${p.precio != null ? escHtml(p.precio) : ''}" min="0" placeholder="$ c/IVA" oninput="setPrecioFactura(${i}, this.value)" />
+    </div>`;
+  });
+  html += `<div class="fitem-total">Total: $${total.toLocaleString('es-CO')}</div>`;
+  cont.innerHTML = html;
+}
+
+function setPrecioFactura(i, val) {
+  if (productosEtiqueta[i]) productosEtiqueta[i].precio = String(val).replace(/[^\d]/g, '');
+  const total = productosEtiqueta.filter(p => p.nombre).reduce((s, p) => s + (parseInt(p.cant) || 1) * (parseFloat(p.precio) || 0), 0);
+  const t = document.querySelector('#facturaItems .fitem-total');
+  if (t) t.textContent = 'Total: $' + total.toLocaleString('es-CO');
+}
+
+function recogerItemsFactura() {
+  return productosEtiqueta.filter(p => p.nombre).map(p => ({
+    sku: (p.codigo || '').trim(), nombre: p.nombre.trim(),
+    cantidad: parseInt(p.cant) || 1, precioConIva: Math.round(parseFloat(p.precio) || 0)
+  }));
+}
+
+// Valida los datos de factura antes de generar la guía. Devuelve mensaje de error o null.
+function validarFactura() {
+  if (!getCfg('facturaUrl')) return 'Para facturar, configura la URL del backend de Alegra en ⚙️ Admin (o desactiva el interruptor de factura).';
+  if (!(document.getElementById('f_nombre')?.value || '').trim()) return 'Factura: falta el nombre o razón social.';
+  const items = recogerItemsFactura();
+  if (!items.length) return 'Factura: no hay productos.';
+  const sin = items.filter(i => !i.precioConIva);
+  if (sin.length) return 'Factura: estos productos no tienen precio: ' + sin.map(i => i.nombre).join(', ');
+  return null;
 }
 
 function setTipoDoc(t) {
@@ -1317,6 +1373,7 @@ function prefillFactura(d) {
   limpiarDocFactura();
   facturaInfo = null;
   const r = document.getElementById('facturaResult'); if (r) r.innerHTML = '';
+  renderFacturaItems();
 }
 
 function resetFactura() {
@@ -1344,55 +1401,40 @@ function componerWhatsApp() {
 }
 
 async function generarFactura() {
-  const url = getCfg('facturaUrl');
   const cont = document.getElementById('facturaResult');
-  const btn = document.getElementById('btnFactura');
-  const setMsg = (cls, html) => { cont.innerHTML = `<div class="${cls}">${html}</div>`; };
+  const setMsg = (cls, html) => { if (cont) cont.innerHTML = `<div class="${cls}">${html}</div>`; };
 
   limpiarDocFactura();
-  const doc = document.getElementById('f_doc').value.trim();
-  const nombre = document.getElementById('f_nombre').value.trim();
+  const error = validarFactura();
+  if (error) { setMsg('fr-err', '⚠️ ' + escHtml(error)); return; }
+
   const email = document.getElementById('f_email').value.trim();
-  const items = productosEtiqueta.filter(p => p.nombre).map(p => ({
-    sku: (p.codigo || '').trim(),
-    nombre: p.nombre.trim(),
-    cantidad: parseInt(p.cant) || 1,
-    precioConIva: Math.round(parseFloat(p.precio) || 0)
-  }));
-
-  if (!url) { setMsg('fr-err', '⚠️ Configura la URL del backend de Alegra en ⚙️ Admin.'); return; }
-  if (!nombre) { setMsg('fr-err', '⚠️ Falta el nombre o razón social.'); return; }
-  if (!items.length) { setMsg('fr-err', '⚠️ No hay productos para facturar.'); return; }
-  const sinPrecio = items.filter(i => !i.precioConIva);
-  if (sinPrecio.length) { setMsg('fr-err', '⚠️ Productos sin precio: ' + escHtml(sinPrecio.map(i => i.nombre).join(', '))); return; }
-
   const payload = {
-    cliente: { tipoDoc: facturaTipoDoc, numeroDoc: doc, nombre, email },
-    items,
+    cliente: {
+      tipoDoc: facturaTipoDoc,
+      numeroDoc: document.getElementById('f_doc').value.trim(),
+      nombre: document.getElementById('f_nombre').value.trim(),
+      email
+    },
+    items: recogerItemsFactura(),
     modo: facturaModo,
     referencia: (datosExtraidos && datosExtraidos.tracker) ? ('Guia ' + datosExtraidos.tracker) : ''
   };
 
-  btn.disabled = true;
   setMsg('fr-load', '⏳ Generando factura en Alegra…');
   try {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const res = await fetch(getCfg('facturaUrl'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.ok === false) throw new Error(data.error || data.message || ('Error ' + res.status));
-    facturaInfo = {
-      numero: data.numero || data.number || '',
-      link: data.pdfUrl || data.url || data.pdf || '',
-      estado: data.estado || facturaModo
-    };
+    facturaInfo = { numero: data.numero || data.number || '', link: data.pdfUrl || data.url || data.pdf || '', estado: data.estado || facturaModo };
     const etiqueta = facturaModo === 'borrador' ? 'creada en BORRADOR' : 'EMITIDA ante la DIAN';
     setMsg('fr-ok', '✅ Factura ' + (facturaInfo.numero ? '<strong>' + escHtml(facturaInfo.numero) + '</strong> ' : '') + etiqueta +
       (facturaModo !== 'borrador' && email ? ' · enviada a ' + escHtml(email) : '') +
       (facturaInfo.link ? ' · <a href="' + escHtml(facturaInfo.link) + '" target="_blank">Ver PDF</a>' : ''));
     componerWhatsApp();
   } catch (err) {
-    setMsg('fr-err', '❌ No se pudo generar la factura: ' + escHtml(err.message));
+    setMsg('fr-err', '❌ No se pudo generar la factura: ' + escHtml(err.message) + ' · <a href="#" onclick="generarFactura();return false;">Reintentar</a>');
   }
-  btn.disabled = false;
 }
 
 function setPago(tipo) {
@@ -1879,6 +1921,19 @@ function cotizarLiveDebounced() {
 async function confirmarYGenerar() {
   const datos = construirDatosActuales();
 
+  // Si el interruptor de factura está activo, validar ANTES de generar la guía
+  // (así no se genera una guía sin poder facturar y obligar a repetirla).
+  const facturaOn = !!(document.getElementById('facturaToggle') && document.getElementById('facturaToggle').checked);
+  if (facturaOn) {
+    const errFac = validarFactura();
+    if (errFac) {
+      showStatus(errFac, 'error');
+      const fr = document.getElementById('facturaResult');
+      if (fr) fr.innerHTML = `<div class="fr-err">⚠️ ${escHtml(errFac)}</div>`;
+      return;
+    }
+  }
+
   actualizarEtiqueta(datos);
   document.getElementById('finalCard').classList.remove('hidden');
   document.getElementById('finalStats').innerHTML = '';
@@ -1896,6 +1951,7 @@ async function confirmarYGenerar() {
     componerWhatsApp();
     document.getElementById('mensajeCliente').classList.remove('hidden');
     showStatus('Etiqueta lista', 'success');
+    if (facturaOn) await generarFactura();
     return;
   }
 
@@ -2105,6 +2161,9 @@ async function confirmarYGenerar() {
     document.getElementById('mensajeCliente').classList.remove('hidden');
     showStatus('Guía generada — ' + tracker, 'success');
 
+    // Factura: el tracker ya está en datosExtraidos para usarlo como referencia
+    if (facturaOn) { datosExtraidos.tracker = tracker; await generarFactura(); }
+
   } catch (err) {
     showStatus('Error EnvioClick: ' + err.message, 'error');
     document.getElementById('finalStats').innerHTML = `<div class="stat-box" style="grid-column:1/-1;border-color:var(--error)"><div class="stat-label">Error</div><div class="stat-value" style="color:var(--error);font-size:13px">${err.message}</div></div>`;
@@ -2253,6 +2312,8 @@ function renderFilasProd() {
     lista.appendChild(row);
   });
   actualizarEtiquetaProductos();
+  const fb = document.getElementById('facturaBlock');
+  if (fb && fb.style.display === 'block') renderFacturaItems();
 }
 
 function prodCampo(i, campo, valor) {
