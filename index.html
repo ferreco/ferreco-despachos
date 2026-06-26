@@ -250,11 +250,11 @@
 
   /* Campo de productos en el formulario (Bloque C) */
   .prod-entry-wrap { margin-top: 10px; }
-  .prod-row { display: grid; grid-template-columns: 48px 1fr 80px 30px; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .prod-row { display: grid; grid-template-columns: 44px minmax(0,1fr) 78px 84px 26px; gap: 6px; margin-bottom: 6px; align-items: center; }
   .prod-row input { background: var(--mid); border: 1.5px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: 'Montserrat', sans-serif; font-size: 12px; font-weight: 600; color: var(--black); outline: none; width: 100%; }
   .prod-row input:focus { border-color: var(--navy); background: white; }
   .prod-row input::placeholder { color: var(--muted); font-weight: 500; }
-  .prod-row-header { display: grid; grid-template-columns: 48px 1fr 80px 30px; gap: 6px; margin-bottom: 4px; }
+  .prod-row-header { display: grid; grid-template-columns: 44px minmax(0,1fr) 78px 84px 26px; gap: 6px; margin-bottom: 4px; }
   .prod-row-header span { font-size: 9px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
   .btn-del-prod { background: none; border: none; cursor: pointer; color: var(--error); font-size: 18px; font-weight: 700; line-height: 1; padding: 0; display: flex; align-items: center; justify-content: center; }
   .btn-add-prod { margin-top: 6px; padding: 8px 14px; background: var(--navy-light); color: var(--navy); border: 1.5px solid var(--border); border-radius: 7px; font-family: 'Montserrat', sans-serif; font-size: 11px; font-weight: 700; cursor: pointer; }
@@ -471,7 +471,7 @@ function checkPwd() {
         <div class="catpick-results" id="catpickResults"></div>
       </div>
       <div class="prod-divider">Productos en esta guía</div>
-      <div class="prod-row-header"><span>Cant</span><span>Producto</span><span>Código</span><span></span></div>
+      <div class="prod-row-header"><span>Cant</span><span>Producto</span><span>Código</span><span>Precio</span><span></span></div>
       <div id="prodEntryList"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button type="button" class="btn-add-prod" onclick="agregarFilaProd('1','','')">+ Agregar producto manual</button>
@@ -1355,10 +1355,11 @@ Para cada producto extrae:
 - cant: número de unidades/cantidad (si el texto dice "2 unidades", "x2", "cantidad: 3", etc. → ese número). Si no se indica, usa "1".
 - nombre: nombre del producto
 - codigo: si aparece una referencia, código, SKU, REF, número de referencia o código de barras → va aquí. Si no hay, deja vacío.
+- precio: precio UNITARIO del producto si aparece en el texto/imagen (solo el número, sin "$", sin puntos de miles ni decimales). Si no aparece, deja vacío.
 NUNCA inventes datos. Si un dato no aparece, ponlo null.
 Si faltan datos críticos (nombre, dirección, ciudad o teléfono), confirmacion_requerida es true.
 RESPONDE ÚNICAMENTE con JSON válido sin texto adicional ni backticks:
-{"cliente":{"nombre":"","cedula":null,"direccion":"","barrio":"","ciudad_nombre":"","telefono":"","email":null,"cross_street":null,"reference":null},"productos":[{"cant":"1","nombre":"","codigo":""}],"datos_faltantes":[],"confirmacion_requerida":false}`;
+{"cliente":{"nombre":"","cedula":null,"direccion":"","barrio":"","ciudad_nombre":"","telefono":"","email":null,"cross_street":null,"reference":null},"productos":[{"cant":"1","nombre":"","codigo":"","precio":""}],"datos_faltantes":[],"confirmacion_requerida":false}`;
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -2012,9 +2013,9 @@ function flashPasteZone() {
 // ═══════════════════════════════════════════════════════════
 let productosEtiqueta = []; // [{cant, nombre, codigo}]
 
-function agregarFilaProd(cant='', nombre='', codigo='') {
+function agregarFilaProd(cant='', nombre='', codigo='', precio='') {
   const id = Date.now() + Math.random();
-  productosEtiqueta.push({ id, cant, nombre, codigo });
+  productosEtiqueta.push({ id, cant, nombre, codigo, precio });
   renderFilasProd();
 }
 
@@ -2029,6 +2030,7 @@ function renderFilasProd() {
       <input type="number" value="${p.cant}" min="1" placeholder="1" oninput="prodCampo(${i},'cant',this.value)" />
       <input type="text" value="${escHtml(p.nombre)}" placeholder="Nombre del producto" oninput="prodCampo(${i},'nombre',this.value)" />
       <input type="text" value="${escHtml(p.codigo)}" placeholder="Código (opcional)" oninput="prodCampo(${i},'codigo',this.value)" />
+      <input type="number" value="${p.precio != null ? escHtml(p.precio) : ''}" min="0" placeholder="$ c/IVA" title="Precio unitario con IVA" oninput="prodCampo(${i},'precio',this.value)" />
       <button type="button" class="btn-del-prod" onclick="eliminarProd(${i})" title="Eliminar">×</button>`;
     lista.appendChild(row);
   });
@@ -2152,7 +2154,7 @@ function agregarProductoCatalogo(sku) {
     existente.cant = String((parseInt(existente.cant) || 0) + 1);
     renderFilasProd();
   } else {
-    agregarFilaProd('1', p.name, p.sku);
+    agregarFilaProd('1', p.name, p.sku, p.price || '');   // precio sugerido del catálogo (con IVA), editable
   }
 }
 
@@ -2203,7 +2205,7 @@ function setProductosDesdeExtraccion(d) {
       });
   const conNombre = objs.filter(p => p && p.nombre);
   if (conNombre.length) {
-    productosEtiqueta = conNombre.map(p => ({ id: Date.now() + Math.random(), cant: p.cant || '1', nombre: p.nombre, codigo: p.codigo || '' }));
+    productosEtiqueta = conNombre.map(p => ({ id: Date.now() + Math.random(), cant: p.cant || '1', nombre: p.nombre, codigo: p.codigo || '', precio: (p.precio != null ? String(p.precio).replace(/[^\d]/g, '') : '') }));
     renderFilasProd();
   }
 }
