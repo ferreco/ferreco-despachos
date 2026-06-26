@@ -284,6 +284,30 @@
   .catpick-empty { padding: 12px; font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; }
   .prod-divider { margin: 14px 0 8px; font-size: 10px; font-weight: 800; color: var(--navy); text-transform: uppercase; letter-spacing: 1px; border-top: 1px solid var(--border); padding-top: 12px; }
 
+  /* Facturación electrónica (Alegra) */
+  .factura-wrap { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .factura-switch { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; font-weight: 800; color: var(--navy); user-select: none; }
+  .factura-switch input { width: 18px; height: 18px; cursor: pointer; accent-color: var(--green); }
+  .factura-block { margin-top: 12px; background: var(--mid); border: 1.5px solid var(--border); border-radius: 10px; padding: 14px; }
+  .factura-doc-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: stretch; }
+  .ftipo { display: flex; gap: 4px; }
+  .ftipo-btn { padding: 0 14px; border: 1.5px solid var(--border); border-radius: 7px; background: white; color: var(--muted); font-family: 'Montserrat', sans-serif; font-size: 12px; font-weight: 800; cursor: pointer; }
+  .ftipo-btn.active { border-color: var(--navy); color: var(--navy); background: var(--navy-light); box-shadow: 0 0 0 1px var(--navy); }
+  .factura-block input[type=text], .factura-block input[type=email] { width: 100%; background: white; border: 1.5px solid var(--border); border-radius: 7px; padding: 9px 11px; font-family: 'Montserrat', sans-serif; font-size: 12px; font-weight: 600; color: var(--black); outline: none; }
+  .factura-block input:focus { border-color: var(--navy); }
+  .factura-input { margin-top: 8px; }
+  .factura-hint { font-size: 10px; font-weight: 600; color: var(--muted); margin-top: 4px; min-height: 12px; }
+  .factura-modo { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+  .factura-modo-lbl { font-size: 10px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px; }
+  .fmodo-btn { padding: 6px 12px; border: 1.5px solid var(--border); border-radius: 7px; background: white; color: var(--muted); font-family: 'Montserrat', sans-serif; font-size: 11px; font-weight: 700; cursor: pointer; }
+  .fmodo-btn.active { border-color: var(--green); color: var(--green-dark); background: var(--green-light); box-shadow: 0 0 0 1px var(--green); }
+  .factura-result { margin-top: 10px; font-size: 12px; font-weight: 600; line-height: 1.5; }
+  .factura-result:empty { display: none; }
+  .factura-result .fr-ok { background: var(--green-light); border: 1.5px solid var(--green); color: var(--green-dark); border-radius: 8px; padding: 10px 12px; }
+  .factura-result .fr-err { background: var(--cobro-light); border: 1.5px solid var(--cobro); color: var(--cobro); border-radius: 8px; padding: 10px 12px; }
+  .factura-result .fr-load { background: white; border: 1.5px solid var(--border); color: var(--muted); border-radius: 8px; padding: 10px 12px; }
+  .factura-result a { color: var(--navy); font-weight: 800; }
+
   /* Paste zone (Ctrl+V imágenes) */
   .paste-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 10px 14px; background: var(--mid); font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; margin-top: 8px; transition: all 0.2s; cursor: default; }
   .paste-zone.paste-active { border-color: var(--green); background: var(--green-light); color: var(--green-dark); }
@@ -605,6 +629,33 @@ function checkPwd() {
         <button class="btn-main" style="margin-top:0" onclick="confirmarYGenerar()">Confirmar y generar</button>
         <button class="btn-secondary" onclick="resetForm()">Cancelar</button>
       </div>
+
+      <!-- Facturación electrónica (Alegra) -->
+      <div class="factura-wrap">
+        <label class="factura-switch">
+          <input type="checkbox" id="facturaToggle" onchange="toggleFacturaBlock()">
+          <span>🧾 Generar factura electrónica (Alegra)</span>
+        </label>
+        <div class="factura-block" id="facturaBlock" style="display:none">
+          <div class="factura-doc-row">
+            <div class="ftipo">
+              <button type="button" class="ftipo-btn active" id="ftipo-CC" onclick="setTipoDoc('CC')">CC</button>
+              <button type="button" class="ftipo-btn" id="ftipo-NIT" onclick="setTipoDoc('NIT')">NIT</button>
+            </div>
+            <input type="text" id="f_doc" placeholder="Número de documento" oninput="limpiarDocFactura()" autocomplete="off" />
+          </div>
+          <div class="factura-hint" id="f_doc_hint"></div>
+          <input type="text" id="f_nombre" class="factura-input" placeholder="Nombre o Razón Social" />
+          <input type="email" id="f_email" class="factura-input" placeholder="Correo (Alegra le envía la factura)" autocomplete="off" />
+          <div class="factura-modo">
+            <span class="factura-modo-lbl">Modo</span>
+            <button type="button" class="fmodo-btn active" id="fmodo-emitida" onclick="setModoFactura('emitida')">Emitida (DIAN)</button>
+            <button type="button" class="fmodo-btn" id="fmodo-borrador" onclick="setModoFactura('borrador')">Borrador</button>
+          </div>
+          <button type="button" class="btn-main" id="btnFactura" style="margin-top:10px" onclick="generarFactura()">🧾 Generar factura</button>
+          <div class="factura-result" id="facturaResult"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Resultado final -->
@@ -725,6 +776,15 @@ function checkPwd() {
     </div>
 
     <div class="card">
+      <div class="card-title">Facturación electrónica (Alegra)</div>
+      <div class="api-field">
+        <label>URL del backend de Alegra (función serverless)</label>
+        <input type="url" id="cfg_facturaUrl" placeholder="https://tu-backend.vercel.app/api/factura" />
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin-top:4px;margin-bottom:0;font-weight:500">Si se deja vacío, el botón "Generar factura" queda inactivo. El token de Alegra vive en el backend, nunca aquí.</p>
+    </div>
+
+    <div class="card">
       <div class="card-title">Modo EnvioClick</div>
       <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600;color:var(--black)">
         <input type="checkbox" id="cfg_production" style="width:18px;height:18px;cursor:pointer">
@@ -830,6 +890,10 @@ let datosExtraidos = null;
 let imagenesBase64 = [];
 const MAX_IMAGENES = 5;
 let mensajeParaCopiar = '';
+let mensajeBaseDespacho = '';   // mensaje de despacho sin la parte de factura
+let facturaTipoDoc = 'CC';
+let facturaModo = 'emitida';
+let facturaInfo = null;         // { numero, link, estado } tras generar
 let municipiosCache = {};
 
 const TAMANOS = {
@@ -848,7 +912,8 @@ const CFG_DEFAULTS = {
   telefono: '3152269798',
   email: 'servicioalcliente@ferreco.com',
   sheetUrl: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQLIkumUBojliSiT7bifi-MbVLE05D8n_kgOEjO7aTUHIXvyS5tcQORe17usyghPP4LOw_wcFygh0bt/pub?gid=0&single=true&output=csv',
-  logUrl: 'https://script.google.com/macros/s/AKfycbx8zMu3a1p2OjM-Qn0wQmTbliEjLp-W8SQJt8KUVEScwmskMPrWnjNZdmBkcE2vd1-P/exec'
+  logUrl: 'https://script.google.com/macros/s/AKfycbx8zMu3a1p2OjM-Qn0wQmTbliEjLp-W8SQJt8KUVEScwmskMPrWnjNZdmBkcE2vd1-P/exec',
+  facturaUrl: ''
 };
 
 // Keys fijas — se usan si el usuario no las sobreescribe en Admin
@@ -882,7 +947,7 @@ function isProduction() {
 window.onload = () => {
   document.getElementById('claudeKey').value = getClaudeKey();
   document.getElementById('envioKey').value = getEnvioKey();
-  ['empresa','direccion','barrio','reference','dane','telefono','email','sheetUrl','logUrl'].forEach(k => {
+  ['empresa','direccion','barrio','reference','dane','telefono','email','sheetUrl','logUrl','facturaUrl'].forEach(k => {
     const el = document.getElementById('cfg_' + k);
     if (el) el.value = getCfg(k);
   });
@@ -915,7 +980,7 @@ function guardarConfig() {
   else localStorage.removeItem('ferreco_claude');
   if (ek && ek !== ENVIO_KEY_DEFAULT) localStorage.setItem('ferreco_envio', ek);
   else localStorage.removeItem('ferreco_envio');
-  ['empresa','direccion','barrio','reference','dane','telefono','email','sheetUrl','logUrl'].forEach(k => {
+  ['empresa','direccion','barrio','reference','dane','telefono','email','sheetUrl','logUrl','facturaUrl'].forEach(k => {
     const el = document.getElementById('cfg_' + k);
     if (el) localStorage.setItem('ferreco_cfg_' + k, (el.value || '').trim());
   });
@@ -1208,6 +1273,128 @@ function setTipo(tipo) {
   actualizarResumen();
 }
 
+// ═══════════════════════════════════════════════════════════
+//  FACTURACIÓN ELECTRÓNICA (ALEGRA)
+// ═══════════════════════════════════════════════════════════
+function toggleFacturaBlock() {
+  const on = document.getElementById('facturaToggle').checked;
+  document.getElementById('facturaBlock').style.display = on ? 'block' : 'none';
+}
+
+function setTipoDoc(t) {
+  facturaTipoDoc = t;
+  document.getElementById('ftipo-CC').classList.toggle('active', t === 'CC');
+  document.getElementById('ftipo-NIT').classList.toggle('active', t === 'NIT');
+  limpiarDocFactura();
+}
+
+function setModoFactura(m) {
+  facturaModo = m;
+  document.getElementById('fmodo-emitida').classList.toggle('active', m === 'emitida');
+  document.getElementById('fmodo-borrador').classList.toggle('active', m === 'borrador');
+}
+
+// CC: solo dígitos. NIT: 9 dígitos SIN dígito de verificación (si entran 10+, se quita el resto).
+function limpiarDocFactura() {
+  const el = document.getElementById('f_doc');
+  if (!el) return;
+  let v = (el.value || '').replace(/\D/g, '');
+  if (facturaTipoDoc === 'NIT' && v.length > 9) v = v.slice(0, 9);  // elimina el DV
+  el.value = v;
+  const hint = document.getElementById('f_doc_hint');
+  if (hint) hint.textContent = facturaTipoDoc === 'NIT'
+    ? 'NIT sin dígito de verificación (9 dígitos).'
+    : 'Cédula de ciudadanía.';
+}
+
+function prefillFactura(d) {
+  const doc = document.getElementById('f_doc');
+  const nom = document.getElementById('f_nombre');
+  const em = document.getElementById('f_email');
+  if (doc) doc.value = (d.cliente?.cedula || '').replace(/\D/g, '');
+  if (nom) nom.value = d.cliente?.nombre || '';
+  if (em) em.value = d.cliente?.email || '';
+  limpiarDocFactura();
+  facturaInfo = null;
+  const r = document.getElementById('facturaResult'); if (r) r.innerHTML = '';
+}
+
+function resetFactura() {
+  facturaInfo = null;
+  const t = document.getElementById('facturaToggle'); if (t) t.checked = false;
+  const b = document.getElementById('facturaBlock'); if (b) b.style.display = 'none';
+  ['f_doc', 'f_nombre', 'f_email'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+  const r = document.getElementById('facturaResult'); if (r) r.innerHTML = '';
+  setTipoDoc('CC');
+  setModoFactura('emitida');
+}
+
+// Líneas de factura para anexar al mensaje de WhatsApp del despacho
+function lineasFacturaWhatsApp() {
+  if (!facturaInfo || !facturaInfo.numero) return '';
+  let s = '\n\n*Factura electrónica:* ' + facturaInfo.numero;
+  if (facturaInfo.link) s += '\n' + facturaInfo.link;
+  return s;
+}
+
+function componerWhatsApp() {
+  mensajeParaCopiar = (mensajeBaseDespacho || '') + lineasFacturaWhatsApp();
+  const el = document.getElementById('mensajeTexto');
+  if (el) el.textContent = mensajeParaCopiar;
+}
+
+async function generarFactura() {
+  const url = getCfg('facturaUrl');
+  const cont = document.getElementById('facturaResult');
+  const btn = document.getElementById('btnFactura');
+  const setMsg = (cls, html) => { cont.innerHTML = `<div class="${cls}">${html}</div>`; };
+
+  limpiarDocFactura();
+  const doc = document.getElementById('f_doc').value.trim();
+  const nombre = document.getElementById('f_nombre').value.trim();
+  const email = document.getElementById('f_email').value.trim();
+  const items = productosEtiqueta.filter(p => p.nombre).map(p => ({
+    sku: (p.codigo || '').trim(),
+    nombre: p.nombre.trim(),
+    cantidad: parseInt(p.cant) || 1,
+    precioConIva: Math.round(parseFloat(p.precio) || 0)
+  }));
+
+  if (!url) { setMsg('fr-err', '⚠️ Configura la URL del backend de Alegra en ⚙️ Admin.'); return; }
+  if (!nombre) { setMsg('fr-err', '⚠️ Falta el nombre o razón social.'); return; }
+  if (!items.length) { setMsg('fr-err', '⚠️ No hay productos para facturar.'); return; }
+  const sinPrecio = items.filter(i => !i.precioConIva);
+  if (sinPrecio.length) { setMsg('fr-err', '⚠️ Productos sin precio: ' + escHtml(sinPrecio.map(i => i.nombre).join(', '))); return; }
+
+  const payload = {
+    cliente: { tipoDoc: facturaTipoDoc, numeroDoc: doc, nombre, email },
+    items,
+    modo: facturaModo,
+    referencia: (datosExtraidos && datosExtraidos.tracker) ? ('Guia ' + datosExtraidos.tracker) : ''
+  };
+
+  btn.disabled = true;
+  setMsg('fr-load', '⏳ Generando factura en Alegra…');
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.error || data.message || ('Error ' + res.status));
+    facturaInfo = {
+      numero: data.numero || data.number || '',
+      link: data.pdfUrl || data.url || data.pdf || '',
+      estado: data.estado || facturaModo
+    };
+    const etiqueta = facturaModo === 'borrador' ? 'creada en BORRADOR' : 'EMITIDA ante la DIAN';
+    setMsg('fr-ok', '✅ Factura ' + (facturaInfo.numero ? '<strong>' + escHtml(facturaInfo.numero) + '</strong> ' : '') + etiqueta +
+      (facturaModo !== 'borrador' && email ? ' · enviada a ' + escHtml(email) : '') +
+      (facturaInfo.link ? ' · <a href="' + escHtml(facturaInfo.link) + '" target="_blank">Ver PDF</a>' : ''));
+    componerWhatsApp();
+  } catch (err) {
+    setMsg('fr-err', '❌ No se pudo generar la factura: ' + escHtml(err.message));
+  }
+  btn.disabled = false;
+}
+
 function setPago(tipo) {
   pagoSeleccionado = tipo;
   document.getElementById('btnPagado').className = 'pago-btn' + (tipo === 'PAGADO' ? ' active-pagado' : '');
@@ -1476,6 +1663,7 @@ function mostrarResultado(d) {
   } else { warn.classList.remove('show'); }
 
   actualizarEtiqueta(d);
+  prefillFactura(d);   // precarga datos de facturación (editables)
   document.getElementById('resultCard').classList.remove('hidden');
   cotizarLive();   // cotización real automática: muestra las 2 transportadoras más baratas
 }
@@ -1704,8 +1892,8 @@ async function confirmarYGenerar() {
     document.getElementById('finalActions').innerHTML = `
       <button class="btn-secondary" onclick="switchTab('etiqueta')">👁️ Ver etiqueta</button>
       <button class="btn-secondary" onclick="imprimirEtiqueta()">🖨️ Imprimir etiqueta</button>`;
-    mensajeParaCopiar = `Hola ${datos.cliente.nombre.split(' ')[0]} 👋, te escribimos de *Ferreco* 🛠️\n\nTu pedido está siendo preparado y pronto saldrá para entrega 🚀\n\nCualquier duda estamos para ayudarte 💪\n*Equipo Ferreco* ❤️`;
-    document.getElementById('mensajeTexto').textContent = mensajeParaCopiar;
+    mensajeBaseDespacho = `Hola ${datos.cliente.nombre.split(' ')[0]} 👋, te escribimos de *Ferreco* 🛠️\n\nTu pedido está siendo preparado y pronto saldrá para entrega 🚀\n\nCualquier duda estamos para ayudarte 💪\n*Equipo Ferreco* ❤️`;
+    componerWhatsApp();
     document.getElementById('mensajeCliente').classList.remove('hidden');
     showStatus('Etiqueta lista', 'success');
     return;
@@ -1912,8 +2100,8 @@ async function confirmarYGenerar() {
     acciones += `<button class="btn-main" style="flex:1;background:var(--green);border-color:var(--green)" onclick="nuevaGuia()">✚ Nueva guía (limpiar todo)</button>`;
     document.getElementById('finalActions').innerHTML = acciones;
 
-    mensajeParaCopiar = generarMensaje(datos.cliente.nombre, tracker, transportadora, datos.esCOD, datos.codValue);
-    document.getElementById('mensajeTexto').textContent = mensajeParaCopiar;
+    mensajeBaseDespacho = generarMensaje(datos.cliente.nombre, tracker, transportadora, datos.esCOD, datos.codValue);
+    componerWhatsApp();   // mensaje de despacho + factura (si ya se generó)
     document.getElementById('mensajeCliente').classList.remove('hidden');
     showStatus('Guía generada — ' + tracker, 'success');
 
@@ -1969,6 +2157,8 @@ function resetForm() {
   const cotCont = document.getElementById('cotizacionLive'); if (cotCont) cotCont.innerHTML = '';
   datosExtraidos = null;
   mensajeParaCopiar = '';
+  mensajeBaseDespacho = '';
+  resetFactura();
   resetProductos();
   const cs = document.getElementById('catpickSearch'); if (cs) cs.value = '';
   const cc = document.getElementById('catpickCat'); if (cc) cc.value = '';
