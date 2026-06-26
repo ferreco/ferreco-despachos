@@ -473,7 +473,10 @@ function checkPwd() {
       <div class="prod-divider">Productos en esta guía</div>
       <div class="prod-row-header"><span>Cant</span><span>Producto</span><span>Código</span><span></span></div>
       <div id="prodEntryList"></div>
-      <button type="button" class="btn-add-prod" onclick="agregarFilaProd('1','','')">+ Agregar producto manual</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn-add-prod" onclick="agregarFilaProd('1','','')">+ Agregar producto manual</button>
+        <button type="button" class="btn-add-prod" style="background:var(--cobro-light);color:var(--cobro);border-color:var(--cobro)" onclick="resetProductos()">🗑️ Vaciar</button>
+      </div>
     </div>
 
     <!-- Card: Canal del pedido -->
@@ -1424,8 +1427,12 @@ function mostrarResultado(d) {
 
   const lista = document.getElementById('r_productos_list');
   lista.innerHTML = '';
-  (d.productos || []).filter(Boolean).forEach(p => {
-    lista.innerHTML += `<div class="producto-item"><div class="producto-dot"></div>${p}</div>`;
+  const seleccion = productosEtiqueta.filter(p => p.nombre);
+  const finalProds = seleccion.length
+    ? seleccion.map(p => (p.cant && String(p.cant) !== '1' ? p.cant + ' x ' : '') + p.nombre + (p.codigo ? ' (' + p.codigo + ')' : ''))
+    : (d.productos || []).filter(Boolean);
+  finalProds.forEach(p => {
+    lista.innerHTML += `<div class="producto-item"><div class="producto-dot"></div>${escHtml(p)}</div>`;
   });
 
   // Aviso si no hay daneCode
@@ -2183,10 +2190,11 @@ function actualizarEtiquetaProductos() {
   }
 }
 
-// Pasa los productos extraídos por Claude (imagen/texto) a la lista editable de la guía.
-// Si la extracción trae productos, REEMPLAZAN la preselección del catálogo (la imagen manda).
-// Si no trae ninguno, se conserva lo que el usuario haya elegido a mano.
+// Rellena la lista de productos de la guía con lo que Claude extrajo de la imagen/texto,
+// PERO solo si la sección de productos está vacía. Lo que el usuario eligió del catálogo
+// (o escribió a mano) manda y nunca se sobreescribe — para reemplazarlo usa "Vaciar".
 function setProductosDesdeExtraccion(d) {
+  if (productosEtiqueta.some(p => p && p.nombre)) return;  // ya hay selección del usuario → respétala
   const objs = (d.productosObj && d.productosObj.length)
     ? d.productosObj
     : (d.productos || []).filter(Boolean).map(p => {
