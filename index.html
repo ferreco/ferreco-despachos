@@ -2021,6 +2021,34 @@ async function confirmarYGenerar() {
     componerWhatsApp();
     document.getElementById('mensajeCliente').classList.remove('hidden');
     showStatus('Etiqueta lista', 'success');
+
+    // Registrar en el Sheet también cuando es solo etiqueta (sin guía/transportadora)
+    try {
+      const vp = datos.valorProductos;
+      const valorProdReg = (vp === null || vp === undefined) ? '' : Number(vp);
+      const prodsFinales = productosEtiqueta.filter(p => p.nombre);
+      const productosStr = prodsFinales.length
+        ? prodsFinales.map(p => (p.cant && String(p.cant) !== '1' ? p.cant + ' x ' : '') + p.nombre + (p.codigo ? ' (' + p.codigo + ')' : '')).join(' | ')
+        : (datos.productos || []).filter(Boolean).join(' | ');
+      registrarDespacho({
+        fecha: new Date().toISOString(),
+        nombre: datos.cliente.nombre,
+        cedula: datos.cliente.cedula || '',
+        telefono: datos.cliente.telefono,
+        ciudad: datos.cliente.ciudad_nombre,
+        direccion: datos.cliente.direccion,
+        productos: productosStr,
+        valorProductos: valorProdReg,
+        valorEnvio: 0,
+        total: datos.esCOD ? Number(datos.codValue || 0) : (Number(valorProdReg) || 0),
+        pago: datos.esCOD ? 'AL_COBRO' : 'PAGADO',
+        tracker: 'SOLO ETIQUETA',
+        transportadora: '',
+        canal: canalLabel(datos.canal || 'OTRO'),
+        modo: isProduction() ? 'PROD' : 'SANDBOX'
+      });
+    } catch (e) { console.warn('Log Sheet falló (no crítico):', e); }
+
     if (facturaOn) await generarFactura();
     return;
   }
