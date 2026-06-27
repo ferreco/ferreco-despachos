@@ -945,7 +945,9 @@ const CLAUDE_KEY_DEFAULT = 'sk-ant-api03-REEMPLAZAR_CON_TU_NUEVA_KEY-AA';
 // Fallback mientras no haya Sheet cargado
 const MUNICIPIOS_FALLBACK = {
   'bogota': '11001000', 'bogotá': '11001000', 'bogota dc': '11001000', 'bogotá dc': '11001000', 'bogota d.c.': '11001000', 'bogotá d.c.': '11001000',
-  'medellin': '05001000', 'medellín': '05001000'
+  'medellin': '05001000', 'medellín': '05001000',
+  // San José de Albán (Nariño) — no está en el Sheet de municipios
+  'san jose de alban': '52019000'
 };
 
 function getEnvioKey() {
@@ -1167,7 +1169,10 @@ const CIUDAD_ALIAS = {
   'la hormiga putumayo': 'villa del guamez',
   'villa del guamez': 'villa del guamez',
   'villagarzon': 'villa garzon',
-  'guamez': 'villa del guamez'
+  'guamez': 'villa del guamez',
+  // Albán (Nariño) = San José de Albán
+  'alban narino': 'san jose de alban',
+  'san jose de alban narino': 'san jose de alban'
 };
 
 function normCiudad(c) {
@@ -1186,11 +1191,17 @@ function buscarDaneCode(ciudad) {
   const k = normCiudad(ciudad);
   if (municipiosCache[k]) return municipiosCache[k];
   if (MUNICIPIOS_FALLBACK[k]) return MUNICIPIOS_FALLBACK[k];
-  // Búsqueda parcial por si viene con departamento concatenado
+  // Coincidencia parcial SOLO por límite de palabra (caso "Ciudad Departamento"),
+  // prefiriendo la clave más larga (más específica). NUNCA por substring a media
+  // palabra — eso hacía que "Albán Nariño" cayera en el municipio "Nariño" y
+  // "Albán" en "Albania" (cambiaba de ciudad).
+  let mejor = null;
   for (const key of Object.keys(municipiosCache)) {
-    if (key.includes(k) || k.includes(key)) return municipiosCache[key];
+    if (k === key || k.startsWith(key + ' ') || key.startsWith(k + ' ')) {
+      if (!mejor || key.length > mejor.length) mejor = key;
+    }
   }
-  return null;
+  return mejor ? municipiosCache[mejor] : null;
 }
 
 // Parser CSV simple (maneja comillas)
