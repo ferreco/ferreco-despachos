@@ -214,6 +214,14 @@
   .final-card { background: white; border: 1.5px solid var(--green); border-radius: 12px; padding: 24px; margin-top: 16px; box-shadow: 0 2px 12px rgba(94,171,31,0.1); }
   .final-title { font-size: 10px; font-weight: 800; color: var(--green); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
 
+  /* Barra de progreso al generar la guía */
+  .gen-progreso { margin-bottom: 16px; }
+  .gen-prog-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .gen-prog-top span:first-child { font-size: 12px; font-weight: 700; color: var(--navy); }
+  .gen-prog-top span:last-child { font-size: 14px; font-weight: 900; color: var(--green-dark); }
+  .gen-prog-track { height: 10px; background: var(--mid); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; }
+  .gen-prog-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--green), var(--green-dark)); border-radius: 20px; transition: width 0.35s ease; }
+
   /* API fields */
   .api-field { margin-bottom: 14px; }
   .api-field label { font-size: 10px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 6px; }
@@ -669,7 +677,11 @@ function checkPwd() {
 
     <!-- Resultado final -->
     <div class="final-card hidden" id="finalCard">
-      <div class="final-title">✓ Despacho generado</div>
+      <div class="final-title" id="finalTitle">✓ Despacho generado</div>
+      <div class="gen-progreso" id="genProgreso" style="display:none">
+        <div class="gen-prog-top"><span id="genProgLbl">Procesando…</span><span id="genProgPct">0%</span></div>
+        <div class="gen-prog-track"><div class="gen-prog-bar" id="genProgBar"></div></div>
+      </div>
       <div class="stats-grid" id="finalStats"></div>
       <div class="actions-row" id="finalActions"></div>
       <div class="mensaje-cliente hidden" id="mensajeCliente">
@@ -903,6 +915,7 @@ let mensajeBaseDespacho = '';   // mensaje de despacho sin la parte de factura
 let facturaTipoDoc = 'CC';
 let facturaModo = 'emitida';
 let facturaInfo = null;         // { numero, link, estado } tras generar
+let _progTimer = null;          // barra de progreso al generar guía
 let municipiosCache = {};
 
 const TAMANOS = {
@@ -1918,6 +1931,51 @@ function cotizarLiveDebounced() {
   _cotizDebounce = setTimeout(cotizarLive, 800);
 }
 
+// ─── Barra de progreso al generar la guía ───
+function setProgreso(pct, texto) {
+  const bar = document.getElementById('genProgBar');
+  if (!bar) return;
+  pct = Math.min(100, Math.max(0, pct));
+  bar.style.width = pct + '%';
+  bar.dataset.pct = pct;
+  const num = document.getElementById('genProgPct');
+  if (num) num.textContent = Math.round(pct) + '%';
+  const lbl = document.getElementById('genProgLbl');
+  if (texto && lbl) lbl.textContent = texto;
+}
+
+function iniciarProgreso(texto) {
+  const wrap = document.getElementById('genProgreso');
+  if (wrap) wrap.style.display = 'block';
+  setProgreso(8, texto || 'Procesando…');
+  if (_progTimer) clearInterval(_progTimer);
+  // Avance "vivo" hasta 90% mientras se espera a las APIs
+  _progTimer = setInterval(() => {
+    const bar = document.getElementById('genProgBar');
+    if (!bar) return;
+    const pct = parseFloat(bar.dataset.pct || '8');
+    if (pct < 90) setProgreso(pct + Math.max(0.4, (90 - pct) * 0.05));
+  }, 250);
+}
+
+// Fija un hito mínimo y actualiza la etiqueta (sin retroceder)
+function pasoProgreso(pct, texto) {
+  const bar = document.getElementById('genProgBar');
+  const actual = bar ? parseFloat(bar.dataset.pct || '0') : 0;
+  setProgreso(Math.max(actual, pct), texto);
+}
+
+function finalizarProgreso(exito) {
+  if (_progTimer) { clearInterval(_progTimer); _progTimer = null; }
+  const wrap = document.getElementById('genProgreso');
+  if (exito) {
+    setProgreso(100, 'Listo');
+    setTimeout(() => { if (wrap) wrap.style.display = 'none'; }, 600);
+  } else if (wrap) {
+    wrap.style.display = 'none';
+  }
+}
+
 async function confirmarYGenerar() {
   const datos = construirDatosActuales();
 
@@ -1946,7 +2004,8 @@ async function confirmarYGenerar() {
       <div class="stat-box"><div class="stat-label">Ciudad</div><div class="stat-value">${datos.cliente.ciudad_nombre || '—'}</div></div>`;
     document.getElementById('finalActions').innerHTML = `
       <button class="btn-secondary" onclick="switchTab('etiqueta')">👁️ Ver etiqueta</button>
-      <button class="btn-secondary" onclick="imprimirEtiqueta()">🖨️ Imprimir etiqueta</button>`;
+      <button class="btn-secondary" onclick="imprimirEtiqueta()">🖨️ Imprimir etiqueta</button>
+      <button class="btn-main" style="flex:1;background:var(--green);border-color:var(--green)" onclick="nuevaGuia()">✚ Nueva guía (limpiar todo)</button>`;
     mensajeBaseDespacho = `Hola ${datos.cliente.nombre.split(' ')[0]} 👋, te escribimos de *Ferreco* 🛠️\n\nTu pedido está siendo preparado y pronto saldrá para entrega 🚀\n\nCualquier duda estamos para ayudarte 💪\n*Equipo Ferreco* ❤️`;
     componerWhatsApp();
     document.getElementById('mensajeCliente').classList.remove('hidden');
@@ -1956,9 +2015,13 @@ async function confirmarYGenerar() {
   }
 
   showStatus('Generando guía en EnvioClick...', 'loading');
+  document.getElementById('finalTitle').textContent = 'Generando despacho…';
+  iniciarProgreso('Preparando datos…');
   const envioKey = getEnvioKey();
 
   if (!envioKey) {
+    finalizarProgreso(false);
+    document.getElementById('finalTitle').textContent = '✓ Despacho generado';
     document.getElementById('finalStats').innerHTML = `<div class="stat-box" style="grid-column:1/-1;border-color:#ffa500"><div class="stat-label">Estado</div><div class="stat-value" style="color:#e67e22;font-size:13px">⚠️ Configura la API Key de EnvioClick</div></div>`;
     document.getElementById('finalActions').innerHTML = `<button class="btn-secondary" onclick="toggleAdmin()">Configurar →</button>`;
     showStatus('Falta API Key de EnvioClick', 'error');
@@ -2019,6 +2082,7 @@ async function confirmarYGenerar() {
     const valorDeclarado = Number(datos.valorProductos) || Number(datos.codValue) || 0;
 
     // --- TARIFA ---
+    pasoProgreso(30, 'Cotizando envío…');
     // Reutiliza la cotización ya mostrada (mismo idRate → precio EXACTO al mostrado).
     // Si cambió la ciudad, el tamaño o el valor COD, recotiza al instante.
     let rate;
@@ -2080,6 +2144,7 @@ async function confirmarYGenerar() {
     };
     if (datos.esCOD) { guiaBody.codValue = datos.codValue; guiaBody.codPaymentMethod = 'cash'; guiaBody.includeGuideCost = false; }
 
+    pasoProgreso(58, 'Generando guía en EnvioClick…');
     const endpoint = isProduction() ? 'shipment' : 'shipment_sandbox';
     const guiaRes = await fetch('https://api.envioclickpro.com.co/api/v2/' + endpoint, {
       method: 'POST',
@@ -2090,6 +2155,7 @@ async function confirmarYGenerar() {
     if (guiaData.status !== 'OK') {
       throw new Error('Generación rechazada por EnvioClick: ' + JSON.stringify(guiaData.status_messages || guiaData));
     }
+    pasoProgreso(82, 'Registrando despacho…');
     const tracker = guiaData.data?.tracker || 'N/A';
     const urlGuia = guiaData.data?.url || '';
     // Calcular valor total a cobrar al cliente (COD): valor productos/cobro + flete + comisión COD
@@ -2162,9 +2228,14 @@ async function confirmarYGenerar() {
     showStatus('Guía generada — ' + tracker, 'success');
 
     // Factura: el tracker ya está en datosExtraidos para usarlo como referencia
-    if (facturaOn) { datosExtraidos.tracker = tracker; await generarFactura(); }
+    if (facturaOn) { pasoProgreso(92, 'Generando factura…'); datosExtraidos.tracker = tracker; await generarFactura(); }
+
+    finalizarProgreso(true);
+    document.getElementById('finalTitle').textContent = '✓ Despacho generado';
 
   } catch (err) {
+    finalizarProgreso(false);
+    document.getElementById('finalTitle').textContent = '✓ Despacho generado';
     showStatus('Error EnvioClick: ' + err.message, 'error');
     document.getElementById('finalStats').innerHTML = `<div class="stat-box" style="grid-column:1/-1;border-color:var(--error)"><div class="stat-label">Error</div><div class="stat-value" style="color:var(--error);font-size:13px">${err.message}</div></div>`;
   }
@@ -2213,6 +2284,9 @@ function resetForm() {
   const vvw = document.getElementById('valorVentaPagadoWrap'); if (vvw) vvw.style.display = 'none';
   cotizacionLive = null;
   if (_cotizDebounce) { clearTimeout(_cotizDebounce); _cotizDebounce = null; }
+  if (_progTimer) { clearInterval(_progTimer); _progTimer = null; }
+  const gp = document.getElementById('genProgreso'); if (gp) gp.style.display = 'none';
+  const ft = document.getElementById('finalTitle'); if (ft) ft.textContent = '✓ Despacho generado';
   const cotCont = document.getElementById('cotizacionLive'); if (cotCont) cotCont.innerHTML = '';
   datosExtraidos = null;
   mensajeParaCopiar = '';
