@@ -718,6 +718,7 @@ function checkPwd() {
           <div class="et-section" id="e_guia_wrap" style="display:none"><div class="et-label">Transportadora / Guía</div><div class="et-value" id="e_guia">—</div></div>
           <div class="et-section"><div class="et-label">Productos</div><div class="et-value" id="e_prod">—</div></div>
           <div class="et-cobro" id="e_cobro">VALOR POR COBRAR: —</div>
+          <div class="et-section" id="e_qr_wrap" style="display:none;text-align:center"><div id="e_qr"></div></div>
           <div class="et-section">
             <div class="et-label">Remite</div>
             <div class="et-value" style="font-size:9px;line-height:1.4">DISTRIBUCIONES FERRECO SAS<br>CALLE 72 # 65B-52 · BOGOTÁ</div>
@@ -897,8 +898,58 @@ Carrera 15 #80-45, El Poblado, Medellín
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <script src="productos-catalogo.js"></script>
 <script>
+// ===== Integración Inventario (Supabase) — cola de despacho =====
+const SUPA_URL = 'https://ivzvmekqnlkdatlyvltp.supabase.co';
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2enZtZWtxbmxrZGF0bHl2bHRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2MTQxMjQsImV4cCI6MjA5ODE5MDEyNH0.Xy6fbS5zRqViPR6w1WZNdtnxn5moK-r3RtUPNNSmA5M';
+
+// Genera el markup del QR (data-URL, sobrevive a document.write) del tracker/id del despacho.
+function etiquetaQRHtml(idDespacho, px) {
+  px = px || 90;
+  try {
+    if (!idDespacho || typeof qrcode === 'undefined') return '';
+    const qr = qrcode(0, 'M');
+    qr.addData(String(idDespacho));
+    qr.make();
+    const img = qr.createDataURL(4, 0);
+    return '<div style="text-align:center;margin-top:4px">' +
+      '<img src="' + img + '" style="width:' + px + 'px;height:' + px + 'px;image-rendering:pixelated;display:inline-block">' +
+      '<div style="font-size:9px;font-weight:800;letter-spacing:1px;color:#111">' + idDespacho + '</div>' +
+      '</div>';
+  } catch (e) { console.warn('QR etiqueta falló (no crítico):', e); return ''; }
+}
+
+// Items para inventario: usa productosEtiqueta (ediciones manuales) con fallback a productosObj.
+function itemsParaInventario(prodsObj) {
+  const editadas = (typeof productosEtiqueta !== 'undefined' ? productosEtiqueta : []).filter(p => p && p.nombre);
+  const fuente = editadas.length ? editadas
+    : (prodsObj || (datosExtraidos && datosExtraidos.productosObj) || []).filter(p => p && p.nombre);
+  return fuente.map(p => ({
+    codigo: p.codigo || '',
+    nombre: p.nombre || '',
+    cantidad: Number(String(p.cant == null ? 1 : p.cant).replace(/[^\d.]/g, '')) || 1
+  }));
+}
+
+// Registra el despacho en el inventario (Supabase RPC crear_despacho). No bloqueante.
+async function registrarDespachoInventario(payload) {
+  const res = await fetch(SUPA_URL + '/rest/v1/rpc/crear_despacho', {
+    method: 'POST',
+    headers: {
+      'apikey': SUPA_ANON,
+      'Authorization': 'Bearer ' + SUPA_ANON,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ p_payload: payload })
+  });
+  if (!res.ok) throw new Error('Supabase ' + res.status + ': ' + await res.text());
+  const data = await res.json().catch(() => null);
+  console.log('Despacho registrado en inventario:', payload.tracker, data);
+  return data;
+}
+
 let tipoSeleccionado = 'GUIA';
 let pagoSeleccionado = null;
 let tamanoSeleccionado = 'S';
@@ -2003,6 +2054,13 @@ async function confirmarYGenerar() {
     }
   }
 
+  // Id propio del despacho para SOLO_ETIQUETA (sin tracker) — usado por QR y registro inventario
+  if (tipoSeleccionado === 'SOLO_ETIQUETA') {
+    if (!datosExtraidos) datosExtraidos = {};
+    if (!datosExtraidos.idDespacho) datosExtraidos.idDespacho = 'FRC-DSP-' + Date.now();
+    datos.idDespacho = datosExtraidos.idDespacho;
+  }
+
   actualizarEtiqueta(datos);
   document.getElementById('finalCard').classList.remove('hidden');
   document.getElementById('finalStats').innerHTML = '';
@@ -2048,6 +2106,21 @@ async function confirmarYGenerar() {
         modo: isProduction() ? 'PROD' : 'SANDBOX'
       });
     } catch (e) { console.warn('Log Sheet falló (no crítico):', e); }
+
+    // Registrar en inventario (cola de despacho) — no bloqueante
+    try {
+      await registrarDespachoInventario({
+        tracker: datos.idDespacho || datosExtraidos.idDespacho,
+        canal: datos.canal || 'OTRO',
+        transportadora: '',
+        cliente_nombre: datos.cliente.nombre,
+        cliente_ciudad: datos.cliente.ciudad_nombre,
+        cliente_tel: datos.cliente.telefono,
+        valor_productos: (datos.valorProductos == null) ? null : Number(datos.valorProductos),
+        fuente: 'despachos',
+        items: itemsParaInventario()
+      });
+    } catch (e) { console.warn('Registro inventario falló (no crítico):', e); }
 
     if (facturaOn) await generarFactura();
     return;
@@ -2239,6 +2312,28 @@ async function confirmarYGenerar() {
         modo: isProduction() ? 'PROD' : 'SANDBOX'
       });
     } catch (e) { console.warn('Log Sheet falló (no crítico):', e); }
+
+    // Registrar en inventario (cola de despacho) — no bloqueante
+    // Solo en PROD: en SANDBOX el endpoint de prueba reutiliza trackers fijos y
+    // contaminaría la cola con duplicados (crear_despacho deduplica por tracker).
+    if (isProduction()) {
+      try {
+        // Si EnvioClick no devolvió tracker real, generar un id propio único para
+        // evitar que dos despachos con 'N/A' se fusionen en uno solo (subdescuento).
+        const trackerInv = (tracker && tracker !== 'N/A') ? tracker : ('FRC-DSP-' + Date.now());
+        await registrarDespachoInventario({
+          tracker: trackerInv,
+          canal: datos.canal || 'OTRO',
+          transportadora: transportadora,
+          cliente_nombre: datos.cliente.nombre,
+          cliente_ciudad: datos.cliente.ciudad_nombre,
+          cliente_tel: datos.cliente.telefono,
+          valor_productos: (datos.valorProductos == null) ? null : Number(datos.valorProductos),
+          fuente: 'despachos',
+          items: itemsParaInventario()
+        });
+      } catch (e) { console.warn('Registro inventario falló (no crítico):', e); }
+    }
 
     document.getElementById('finalStats').innerHTML = `
       <div class="stat-box"><div class="stat-label">Tracking</div><div class="stat-value">${tracker}</div></div>
@@ -2605,6 +2700,16 @@ function setProductosDesdeExtraccion(d) {
 function actualizarEtiqueta(d) {
   _actualizarEtiquetaBase(d);
   actualizarEtiquetaProductos();
+  // QR escaneable (tracker o id propio del despacho)
+  try {
+    const qrWrap = document.getElementById('e_qr_wrap');
+    const qrEl = document.getElementById('e_qr');
+    const idQR = (d && (d.tracker || d.idDespacho)) || (datosExtraidos && datosExtraidos.idDespacho) || '';
+    if (qrWrap && qrEl) {
+      if (idQR) { qrEl.innerHTML = etiquetaQRHtml(idQR, 90); qrWrap.style.display = ''; }
+      else { qrEl.innerHTML = ''; qrWrap.style.display = 'none'; }
+    }
+  } catch (e) { console.warn('QR preview falló (no crítico):', e); }
 }
 
 // Sobreescribir imprimirEtiqueta para incluir tabla de productos
@@ -2675,6 +2780,8 @@ function imprimirEtiqueta() {
 
   // Logo base64 igual al original
   const logoSrc = document.querySelector('.et-logo img')?.src || '';
+  const qrId = (datosExtraidos && (datosExtraidos.tracker || datosExtraidos.idDespacho)) || '';
+  const qrHTML = etiquetaQRHtml(qrId, 100);
   const win = window.open('', '_blank');
   win.document.write(`<!DOCTYPE html><html><head><title>Etiqueta Ferreco</title>
   <style>
@@ -2707,6 +2814,7 @@ function imprimirEtiqueta() {
     <div><div class="lbl">Productos</div><div class="val">${prodHTML}</div></div>
     <div class="cobro">${cobro}</div>
     <div><div class="lbl">Remite</div><div class="val" style="font-size:10px">DISTRIBUCIONES FERRECO SAS<br>CALLE 72 # 65B-52 · BOGOTÁ</div></div>
+    ${qrHTML}
     <div class="prioridad">¡GRACIAS!</div>
     <div class="redes">TIKTOK: @FERRECO.COM&nbsp;&nbsp;&nbsp;INSTAGRAM: @FERRECO&nbsp;&nbsp;&nbsp;WEB: Ferreco.com</div>
   </div></body></html>`);
@@ -2967,6 +3075,7 @@ function imprimirEtiquetaIndividualMasivo(p) {
       </tr></thead><tbody>${prods.map((pr,idx) => `<tr><td style="text-align:center;font-weight:800;padding:2px 3px">${escHtml(pr.cant)||'1'}</td><td style="padding:2px 3px;font-weight:600;color:#000">${escHtml(pr.nombre)}</td><td style="text-align:right;padding:2px 3px;font-size:7px;color:#000">${escHtml(pr.codigo)}</td></tr>`).join('')}</tbody></table>`;
   }
   const guiaInfo = p.tracker ? `<div><div class="lbl">Transportadora / Guía</div><div class="val" style="font-size:10px">${escHtml(p.transportadora||'')} · ${escHtml(p.tracker)}</div></div>` : '';
+  const qrHTML = etiquetaQRHtml(p.tracker || p.idDespacho || '', 100);
   const win = window.open('', '_blank');
   win.document.write(`<!DOCTYPE html><html><head><title>Etiqueta Ferreco</title>
   <style>@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&display=swap');
@@ -2997,6 +3106,7 @@ function imprimirEtiquetaIndividualMasivo(p) {
     <div><div class="lbl">Productos</div><div class="val">${prodHTML}</div></div>
     <div class="cobro">${cobro}</div>
     <div><div class="lbl">Remite</div><div class="val" style="font-size:10px">DISTRIBUCIONES FERRECO SAS<br>CALLE 72 # 65B-52 · BOGOTÁ</div></div>
+    ${qrHTML}
     <div class="prioridad">¡GRACIAS!</div>
     <div class="redes">TIKTOK: @FERRECO.COM&nbsp;&nbsp;&nbsp;INSTAGRAM: @FERRECO&nbsp;&nbsp;&nbsp;WEB: Ferreco.com</div>
   </div></body></html>`);
@@ -3274,6 +3384,32 @@ async function generarGuiaMasivo(p, envioKey) {
         const totalM = (parseFloat(p.cobro)||0) + envioM;
         registrarDespacho({ fecha: new Date().toISOString(), nombre: d.cliente.nombre, cedula: d.cliente.cedula||'', telefono: d.cliente.telefono, ciudad: d.cliente.ciudad_nombre, direccion: d.cliente.direccion, productos: (d.productos||[]).filter(x=>x.nombre).map(x=>`${x.cant||1}× ${x.nombre}`).join(' | '), valorProductos:'', valorEnvio:envioM, total:totalM, pago:p.pago, tracker:p.tracker, transportadora:resultado.rate.carrier||'', canal:canalLabel(p.canal||'TIKTOK'), modo:isProduction()?'PROD':'SANDBOX' });
   } catch(e) { console.warn('Sheet masivo:', e); }
+
+  // Registrar en inventario (cola de despacho) — no bloqueante
+  // Solo en PROD: en SANDBOX el endpoint de prueba reutiliza trackers fijos y
+  // contaminaría la cola con duplicados (crear_despacho deduplica por tracker).
+  if (isProduction()) {
+    try {
+      // Si EnvioClick no devolvió tracker real, generar un id propio único para
+      // evitar que dos despachos con 'N/A' se fusionen en uno solo (subdescuento).
+      const trackerInv = (p.tracker && p.tracker !== 'N/A') ? p.tracker : ('FRC-DSP-' + Date.now());
+      await registrarDespachoInventario({
+        tracker: trackerInv,
+        canal: (p.canal || d.canal || canalSeleccionado || 'OTRO'),
+        transportadora: p.transportadora || '',
+        cliente_nombre: d.cliente.nombre,
+        cliente_ciudad: d.cliente.ciudad_nombre,
+        cliente_tel: d.cliente.telefono,
+        valor_productos: null,
+        fuente: 'despachos',
+        items: (d.productos || []).filter(x => x && x.nombre).map(x => ({
+          codigo: x.codigo || '',
+          nombre: x.nombre || '',
+          cantidad: Number(String(x.cant == null ? 1 : x.cant).replace(/[^\d.]/g, '')) || 1
+        }))
+      });
+    } catch(e) { console.warn('Registro inventario masivo falló (no crítico):', e); }
+  }
 }
 
 function descargarPDFMasivo() {
@@ -3323,6 +3459,7 @@ function imprimirEtiquetasMasivo() {
       <div><div class="lbl">Productos</div><div class="val">${prodHTML}</div></div>
       <div class="cobro">${cobro}</div>
       <div><div class="lbl">Remite</div><div class="val" style="font-size:10px">DISTRIBUCIONES FERRECO SAS<br>CALLE 72 # 65B-52 · BOGOTÁ</div></div>
+      ${etiquetaQRHtml(p.tracker || p.idDespacho || '', 100)}
       <div class="prioridad">¡GRACIAS!</div>
       <div class="redes">TIKTOK: @FERRECO.COM&nbsp;&nbsp;&nbsp;INSTAGRAM: @FERRECO&nbsp;&nbsp;&nbsp;WEB: Ferreco.com</div>
     </div>`;
